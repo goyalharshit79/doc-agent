@@ -1,0 +1,19 @@
+# Virtual environment
+venv/
+.venv/
+
+# Qdrant binary + persistent storage
+qdrant/
+qdrant_storage/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Environment
+.env
+
+# IDE
+.vscode/
+.idea/
