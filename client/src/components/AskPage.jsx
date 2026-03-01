@@ -19,7 +19,7 @@ function TypingIndicator() {
 }
 
 // ── Single chat message ───────────────────────────────────────────────────────
-function ChatMessage({ msg, onCitationClick }) {
+function ChatMessage({ msg, onCitationClick, activeCitationId }) {
   const isUser = msg.role === 'user'
 
   return (
@@ -33,7 +33,7 @@ function ChatMessage({ msg, onCitationClick }) {
           {msg.citations.map((c, i) => (
             <button
               key={i}
-              className="citation-chip"
+              className={`citation-chip${activeCitationId === c.chunk_id ? ' citation-chip--active' : ''}`}
               onClick={() => onCitationClick(c)}
               title={c.quote?.slice(0, 120) + '…'}
             >
@@ -56,9 +56,18 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
   const [isLoading, setIsLoading]           = useState(false)
   const [previewDocId, setPreviewDocId]     = useState(null)
   const [previewPage, setPreviewPage]       = useState(null)
+  const [highlightQuote, setHighlightQuote] = useState(null)
+  const [activeCitationId, setActiveCitationId] = useState(null)
   const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false)
   const messagesEndRef = useRef(null)
   const inputRef       = useRef(null)
+
+  // Default preview to first processed file
+  useEffect(() => {
+    if (!previewDocId && processedFiles.length > 0) {
+      setPreviewDocId(processedFiles[0].docId)
+    }
+  }, [processedFiles, previewDocId])
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -76,6 +85,8 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
 
     const question = input.trim()
     setInput('')
+    setHighlightQuote(null)
+    setActiveCitationId(null)
 
     const userMsg = { role: 'user', content: question }
     setMessages(prev => [...prev, userMsg])
@@ -110,12 +121,14 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
 
   const handleKey = (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
 
-  // ── Citation click → jump preview ─────────────────────────────────────────
+  // ── Citation click → jump preview + highlight ───────────────────────────────
   const handleCitationClick = (citation) => {
     const fileEntry = files.find(f => f.docId === citation.doc_id)
     if (!fileEntry) return
 
     setPreviewDocId(citation.doc_id)
+    setHighlightQuote(citation.quote || null)
+    setActiveCitationId(citation.chunk_id || null)
 
     if (citation.page) {
       setPreviewPage({ page: citation.page, ts: Date.now() })
@@ -178,6 +191,7 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
               key={i}
               msg={msg}
               onCitationClick={handleCitationClick}
+              activeCitationId={activeCitationId}
             />
           ))}
 
@@ -208,31 +222,38 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
         </div>
       </div>
 
-      {/* ── Preview panel (desktop inline, mobile slide-up sheet) ──────────── */}
-      {previewFile && (
-        <div className={`ask-preview-panel${mobilePreviewOpen ? ' ask-preview-panel--open' : ''}`}>
-          <div className="ask-preview-handle" />
-          <button
-            className="ask-preview-close"
-            onClick={() => setMobilePreviewOpen(false)}
-            aria-label="Close preview"
-          >
-            <X size={16} />
-          </button>
-          <DocumentPreview file={previewFile.file} externalPage={previewPage} />
-        </div>
-      )}
+      {/* ── Preview panel — always visible ─────────────────────────────────── */}
+      <div className={`ask-preview-panel${mobilePreviewOpen ? ' ask-preview-panel--open' : ''}`}>
+        <div className="ask-preview-handle" />
+        <button
+          className="ask-preview-close"
+          onClick={() => setMobilePreviewOpen(false)}
+          aria-label="Close preview"
+        >
+          <X size={16} />
+        </button>
+        {previewFile ? (
+          <DocumentPreview
+            file={previewFile.file}
+            externalPage={previewPage}
+            highlightText={highlightQuote}
+          />
+        ) : (
+          <div className="ask-preview-empty">
+            <FileText size={32} strokeWidth={1} color="var(--accent-dim)" />
+            <p>Document preview</p>
+          </div>
+        )}
+      </div>
 
       {/* ── Mobile FAB to toggle preview ──────────────────────────────────── */}
-      {previewDocId && (
-        <button
-          className="ask-preview-fab"
-          onClick={() => setMobilePreviewOpen(prev => !prev)}
-          aria-label="Toggle document preview"
-        >
-          {mobilePreviewOpen ? <X size={20} /> : <Eye size={20} />}
-        </button>
-      )}
+      <button
+        className="ask-preview-fab"
+        onClick={() => setMobilePreviewOpen(prev => !prev)}
+        aria-label="Toggle document preview"
+      >
+        {mobilePreviewOpen ? <X size={20} /> : <Eye size={20} />}
+      </button>
     </div>
   )
 }

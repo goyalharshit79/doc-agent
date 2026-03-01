@@ -1606,6 +1606,13 @@ body {
   transform: translateY(-1px);
 }
 
+.citation-chip--active {
+  background: rgba(212, 175, 55, 0.15);
+  border-color: rgba(212, 175, 55, 0.5);
+  color: var(--text-primary);
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.12);
+}
+
 .citation-name {
   max-width: 120px;
   overflow: hidden;
@@ -1915,4 +1922,64 @@ body {
   .ask-doc-bar {
     padding: 8px 12px;
   }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   CITATION HIGHLIGHT
+───────────────────────────────────────────────────────────── */
+@keyframes highlightPulse {
+  0%   { background-color: rgba(212, 175, 55, 0.55); }
+  60%  { background-color: rgba(212, 175, 55, 0.30); }
+  100% { background-color: rgba(212, 175, 55, 0.20); }
+}
+
+.citation-highlight {
+  background-color: rgba(212, 175, 55, 0.20);
+  border-radius: 2px;
+  padding: 1px 0;
+  animation: highlightPulse 1.5s ease-out;
+  box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.12);
+}
+
+/* PDF text layer overlay — text stays transparent over canvas */
+.pdf-page-container {
+  position: relative;
+  display: inline-block;
+}
+
+.pdf-page-container .textLayer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  line-height: 1;
+  opacity: 0.3;
+}
+
+.pdf-page-container .textLayer span {
+  position: absolute;
+  white-space: pre;
+  color: transparent;
+  transform-origin: 0% 0%;
+}
+
+.pdf-page-container .textLayer .citation-highlight {
+  color: transparent;
+  background-color: rgba(212, 175, 55, 0.40);
+  border-radius: 2px;
+  animation: highlightPulse 1.5s ease-out;
+}
+
+/* Empty state for preview panel when no file selected */
+.ask-preview-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.84rem;
 }
