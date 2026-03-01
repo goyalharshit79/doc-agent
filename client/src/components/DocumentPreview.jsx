@@ -21,106 +21,13 @@ function ErrorState({ message }) {
 
 // ── Highlight helpers ───────────────────────────────────────────────────────────
 
-/**
- * Normalize whitespace for fuzzy text matching:
- *   collapse runs of whitespace → single space, trim, lowercase.
- */
+/** Collapse whitespace → single space, trim, lowercase. */
 function normalize(str) {
   return str.replace(/\s+/g, ' ').trim().toLowerCase()
 }
 
 /**
- * Given an array of DOM text-containing elements (spans or text nodes),
- * find the first occurrence of `query` in their concatenated text and
- * wrap matching portions in <mark class="citation-highlight">.
- *
- * Returns the first <mark> element created (for scroll-into-view), or null.
- */
-function highlightInNodes(nodes, getText, query) {
-  if (!query) return null
-
-  // Use first ~120 chars of query for matching (quotes can be very long chunks)
-  const searchText = normalize(query).slice(0, 120)
-  if (!searchText) return null
-
-  // Build concatenated text + offset map
-  let fullText = ''
-  const entries = []
-  for (const node of nodes) {
-    const text = getText(node)
-    entries.push({ node, start: fullText.length, text })
-    fullText += text
-  }
-
-  const normalizedFull = normalize(fullText)
-  const matchIdx = normalizedFull.indexOf(searchText)
-  if (matchIdx === -1) return null
-
-  // Map normalized index back to original positions.
-  // Build a mapping: normalized char index → original char index
-  const origText = entries.map(e => e.text).join('')
-  const normToOrig = []
-  let oi = 0
-  for (let ni = 0; ni < normalizedFull.length; ni++) {
-    // Skip extra whitespace in original
-    while (oi < origText.length && origText[oi] !== normalizedFull[ni] &&
-           /\s/.test(origText[oi]) && /\s/.test(normalizedFull[ni])) {
-      oi++
-    }
-    if (oi < origText.length && origText[oi].toLowerCase() === normalizedFull[ni]) {
-      normToOrig.push(oi)
-      oi++
-    } else {
-      normToOrig.push(oi)
-    }
-  }
-
-  const origStart = normToOrig[matchIdx] || 0
-  const origEnd = (normToOrig[matchIdx + searchText.length - 1] || origStart) + 1
-
-  let firstMark = null
-
-  // Walk entries in reverse so DOM mutations don't shift later indices
-  for (let i = entries.length - 1; i >= 0; i--) {
-    const { node, start, text } = entries[i]
-    const nodeEnd = start + text.length
-
-    // Skip nodes outside the match range
-    if (nodeEnd <= origStart || start >= origEnd) continue
-
-    const overlapStart = Math.max(0, origStart - start)
-    const overlapEnd = Math.min(text.length, origEnd - start)
-
-    // Create mark element
-    const mark = document.createElement('mark')
-    mark.className = 'citation-highlight'
-    mark.textContent = text.slice(overlapStart, overlapEnd)
-
-    // For text layer spans: replace the span's content by splitting
-    if (node.nodeType === Node.TEXT_NODE) {
-      // Split text node and insert mark
-      const afterNode = node.splitText(overlapStart)
-      afterNode.textContent = afterNode.textContent.slice(overlapEnd - overlapStart)
-      node.parentNode.insertBefore(mark, afterNode)
-    } else {
-      // It's an element (like a text layer <span>): manipulate innerHTML
-      const before = text.slice(0, overlapStart)
-      const after = text.slice(overlapEnd)
-      node.textContent = ''
-      if (before) node.appendChild(document.createTextNode(before))
-      node.appendChild(mark)
-      if (after) node.appendChild(document.createTextNode(after))
-    }
-
-    firstMark = mark
-  }
-
-  return firstMark
-}
-
-/**
- * Remove all <mark class="citation-highlight"> from a container,
- * restoring the original text.
+ * Remove all highlight elements from a container.
  */
 function clearHighlights(container) {
   if (!container) return
@@ -131,19 +38,84 @@ function clearHighlights(container) {
   })
 }
 
+/**
+ * Given an array of DOM text nodes, find the first occurrence of `query`
+ * in their concatenated text, wrap the matching range in <mark>, and
+ * return the first <mark> for scrolling.
+ */
+function highlightInTextNodes(container, query) {
+  if (!query || !container) return null
+
+  const searchText = normalize(query).slice(0, 120)
+  if (!searchText) return null
+
+  // Collect text nodes
+  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, null)
+  const textNodes = []
+  let node
+  while ((node = walker.nextNode())) textNodes.push(node)
+  if (!textNodes.length) return null
+
+  // Build concatenated text
+  let fullText = ''
+  const entries = []
+  for (const tn of textNodes) {
+    entries.push({ node: tn, start: fullText.length })
+    fullText += tn.textContent
+  }
+
+  const normalizedFull = normalize(fullText)
+  const matchIdx = normalizedFull.indexOf(searchText)
+  if (matchIdx === -1) return null
+
+  // Simple mapping: use proportional index into original text
+  const ratio = fullText.length / normalizedFull.length
+  const origStart = Math.floor(matchIdx * ratio)
+  const origEnd = Math.min(fullText.length, Math.floor((matchIdx + searchText.length) * ratio))
+
+  let firstMark = null
+
+  // Walk entries in reverse to avoid index shifts
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const { node: tn, start } = entries[i]
+    const nodeEnd = start + tn.textContent.length
+
+    if (nodeEnd <= origStart || start >= origEnd) continue
+
+    const overlapStart = Math.max(0, origStart - start)
+    const overlapEnd = Math.min(tn.textContent.length, origEnd - start)
+
+    try {
+      const range = document.createRange()
+      range.setStart(tn, overlapStart)
+      range.setEnd(tn, overlapEnd)
+      const mark = document.createElement('mark')
+      mark.className = 'citation-highlight'
+      range.surroundContents(mark)
+      firstMark = mark
+    } catch (e) {
+      // surroundContents can fail if range crosses element boundaries
+      console.warn('Highlight range failed:', e)
+    }
+  }
+
+  return firstMark
+}
+
 
 // ── PDF Preview ────────────────────────────────────────────────────────────────
 function PdfPreview({ file, externalPage, highlightText }) {
-  const canvasRef     = useRef(null)
-  const textLayerRef  = useRef(null)
-  const scrollRef     = useRef(null)
+  const canvasRef    = useRef(null)
+  const overlayRef   = useRef(null)
   const [pdf, setPdf]               = useState(null)
   const [page, setPage]             = useState(1)
   const [numPages, setNumPages]     = useState(0)
   const [scale, setScale]           = useState(1.2)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
-  const [textLayerReady, setTextLayerReady] = useState(0)
+  // Store text items + viewport for highlighting
+  const [textItems, setTextItems]   = useState([])
+  const [vpState, setVpState]       = useState(null)
 
   // Jump to page when citation is clicked externally
   useEffect(() => {
@@ -174,7 +146,7 @@ function PdfPreview({ file, externalPage, highlightText }) {
     return () => { cancelled = true }
   }, [file])
 
-  // Render page canvas + text layer
+  // Render page canvas + extract text items
   useEffect(() => {
     if (!pdf || !canvasRef.current) return
     let cancelled = false
@@ -185,32 +157,20 @@ function PdfPreview({ file, externalPage, highlightText }) {
         if (cancelled) return
         const viewport = pdfPage.getViewport({ scale })
 
-        // ── Canvas ──
+        // ── Render canvas ──
         const canvas = canvasRef.current
         const ctx    = canvas.getContext('2d')
         canvas.height = viewport.height
         canvas.width  = viewport.width
         await pdfPage.render({ canvasContext: ctx, viewport }).promise
 
-        // ── Text layer ──
-        if (textLayerRef.current) {
-          const pdfjsLib = await import('pdfjs-dist')
-          const textContent = await pdfPage.getTextContent()
-          if (cancelled) return
+        // ── Extract text items with positions ──
+        const textContent = await pdfPage.getTextContent()
+        if (cancelled) return
 
-          const tlDiv = textLayerRef.current
-          tlDiv.innerHTML = ''
-          tlDiv.style.width  = viewport.width + 'px'
-          tlDiv.style.height = viewport.height + 'px'
-
-          const tl = new pdfjsLib.TextLayer({
-            textContentSource: textContent,
-            container: tlDiv,
-            viewport,
-          })
-          await tl.render()
-          if (!cancelled) setTextLayerReady(prev => prev + 1)
-        }
+        const items = textContent.items.filter(item => item.str && item.str.trim())
+        setTextItems(items)
+        setVpState(viewport)
       } catch (e) {
         if (!cancelled) setError('Render error: ' + e.message)
       }
@@ -219,22 +179,73 @@ function PdfPreview({ file, externalPage, highlightText }) {
     return () => { cancelled = true }
   }, [pdf, page, scale])
 
-  // Highlight text in text layer
+  // ── Highlight: draw rectangles over matching text items ──
   useEffect(() => {
-    const tlDiv = textLayerRef.current
-    if (!tlDiv) return
+    const overlay = overlayRef.current
+    if (!overlay) return
 
-    clearHighlights(tlDiv)
-    if (!highlightText) return
+    // Clear previous highlights
+    overlay.innerHTML = ''
 
-    const spans = Array.from(tlDiv.querySelectorAll('span'))
-    if (!spans.length) return
+    if (!highlightText || !textItems.length || !vpState) return
 
-    const firstMark = highlightInNodes(spans, s => s.textContent, highlightText)
-    if (firstMark) {
-      firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const searchText = normalize(highlightText).slice(0, 120)
+    if (!searchText) return
+
+    // Concatenate text items with spaces between them
+    const fullText = textItems.map(item => item.str).join(' ')
+    const normalizedFull = normalize(fullText)
+
+    const matchIdx = normalizedFull.indexOf(searchText)
+    if (matchIdx === -1) return
+
+    const matchEnd = matchIdx + searchText.length
+
+    // Walk text items, track normalized char offset, find overlapping items
+    let charOffset = 0
+    let firstRect = null
+    const xScale = Math.abs(vpState.transform[0])
+    const yScale = Math.abs(vpState.transform[3])
+
+    for (const item of textItems) {
+      const itemNorm = normalize(item.str)
+      const itemStart = charOffset
+      const itemEnd = charOffset + itemNorm.length
+
+      // +1 for the space separator
+      charOffset = itemEnd + 1
+
+      // Check overlap
+      if (itemEnd <= matchIdx || itemStart >= matchEnd) continue
+
+      // This text item overlaps the match — draw a highlight rectangle
+      const [x, y] = vpState.convertToViewportPoint(item.transform[4], item.transform[5])
+      const fontSize = Math.abs(item.transform[0]) || Math.abs(item.transform[3]) || 12
+      const rectWidth = item.width * xScale
+      const rectHeight = fontSize * yScale * 1.3
+
+      const rect = document.createElement('div')
+      rect.className = 'pdf-highlight-rect'
+      rect.style.cssText = `
+        position: absolute;
+        left: ${x}px;
+        top: ${y - rectHeight}px;
+        width: ${rectWidth}px;
+        height: ${rectHeight}px;
+        background: rgba(212, 175, 55, 0.35);
+        border-radius: 2px;
+        pointer-events: none;
+        animation: highlightPulse 1.5s ease-out;
+      `
+      overlay.appendChild(rect)
+      if (!firstRect) firstRect = rect
     }
-  }, [highlightText, textLayerReady])
+
+    // Scroll first highlight into view
+    if (firstRect) {
+      firstRect.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    }
+  }, [highlightText, textItems, vpState])
 
   const zoom = (d) => setScale(s => Math.min(3, Math.max(0.5, +(s + d).toFixed(1))))
 
@@ -263,10 +274,10 @@ function PdfPreview({ file, externalPage, highlightText }) {
           <button className="pdf-tool-btn" onClick={() => { setScale(1.2); setPage(1) }}><RotateCcw size={13} /></button>
         </div>
       </div>
-      <div className="pdf-canvas-scroll" ref={scrollRef}>
+      <div className="pdf-canvas-scroll">
         <div className="pdf-page-container">
           <canvas ref={canvasRef} className="pdf-canvas" />
-          <div ref={textLayerRef} className="textLayer" />
+          <div ref={overlayRef} className="pdf-highlight-overlay" />
         </div>
       </div>
     </div>
@@ -303,16 +314,7 @@ function DocxPreview({ file, highlightText }) {
     clearHighlights(bodyRef.current)
     if (!highlightText) return
 
-    // Collect all text nodes via TreeWalker
-    const walker = document.createTreeWalker(bodyRef.current, NodeFilter.SHOW_TEXT, null)
-    const textNodes = []
-    let node
-    while ((node = walker.nextNode())) {
-      textNodes.push(node)
-    }
-    if (!textNodes.length) return
-
-    const firstMark = highlightInNodes(textNodes, n => n.textContent, highlightText)
+    const firstMark = highlightInTextNodes(bodyRef.current, highlightText)
     if (firstMark) {
       firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
@@ -360,24 +362,10 @@ function TextPreview({ file, highlightText }) {
     const idx = normalizedFull.indexOf(searchText)
     if (idx === -1) return text
 
-    // Map normalized index back to original text position
-    const normToOrig = []
-    let oi = 0
-    for (let ni = 0; ni < normalizedFull.length; ni++) {
-      while (oi < text.length && text[oi] !== normalizedFull[ni] &&
-             /\s/.test(text[oi]) && /\s/.test(normalizedFull[ni])) {
-        oi++
-      }
-      if (oi < text.length && text[oi].toLowerCase() === normalizedFull[ni]) {
-        normToOrig.push(oi)
-        oi++
-      } else {
-        normToOrig.push(oi)
-      }
-    }
-
-    const origStart = normToOrig[idx] || 0
-    const origEnd = (normToOrig[idx + searchText.length - 1] || origStart) + 1
+    // Approximate mapping from normalized to original index
+    const ratio = text.length / normalizedFull.length
+    const origStart = Math.floor(idx * ratio)
+    const origEnd = Math.min(text.length, Math.floor((idx + searchText.length) * ratio))
 
     return (
       <>
