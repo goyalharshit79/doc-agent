@@ -202,7 +202,7 @@ def similarity_search(query: str, doc_ids: list[str], top_k: int = 6) -> list[di
                     "chunk_id": payload.get("chunk_id", str(hit.id)),
                     "doc_id":   doc_id,
                     "doc_name": payload.get("doc_name", ""),
-                    "page":     int(payload["page"]) if payload.get("page") else None,
+                    "page":     int(payload["page"]) if payload.get("page") and payload["page"].strip() else None,
                     "heading":  payload.get("heading") or None,
                     "text":     payload.get("text", ""),
                     "score":    hit.score,

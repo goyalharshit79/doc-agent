@@ -39,9 +39,11 @@ You MUST respond ONLY with a valid JSON object in this exact format — no pream
 Rules:
 - NEVER make a claim without a citation.
 - NEVER cite a chunk_id that was not in the provided context.
+- Copy chunk_id values EXACTLY as they appear in the context — character for character.
 - If the answer requires multiple points, include a citation for each point.
 - If you cannot answer from the provided context, say so in the answer field and return an empty citations array.
 - Keep answers clear, direct, and grounded in the document text.
+- Do NOT include raw chunk text or chunk_ids in the answer — the answer should read as natural prose.
 """
 
 
@@ -70,27 +72,82 @@ def _build_history_for_gemini(history: list[ConversationTurn]) -> list[dict]:
     return gemini_history
 
 
-def _parse_llm_response(raw: str, chunks: list[dict]) -> tuple[str, list[Citation]]:
-    cleaned = re.sub(r"```json|```", "", raw).strip()
-
+def _extract_json(raw: str) -> dict | None:
+    """
+    Try multiple strategies to extract a JSON object from the LLM response.
+    Returns the parsed dict, or None if all strategies fail.
+    """
+    # Strategy 1: direct parse (clean JSON)
     try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError:
-        logger.warning(f"LLM returned non-JSON: {raw[:200]}")
+        return json.loads(raw.strip())
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Strategy 2: strip markdown code fences
+    cleaned = re.sub(r"```(?:json)?\s*", "", raw).strip()
+    cleaned = re.sub(r"```\s*$", "", cleaned).strip()
+    try:
+        return json.loads(cleaned)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # Strategy 3: extract first JSON object with regex
+    match = re.search(r'\{[\s\S]*\}', raw)
+    if match:
+        try:
+            return json.loads(match.group())
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # Strategy 4: find the outermost { } braces manually
+    first_brace = raw.find('{')
+    last_brace = raw.rfind('}')
+    if first_brace != -1 and last_brace > first_brace:
+        try:
+            return json.loads(raw[first_brace:last_brace + 1])
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return None
+
+
+def _parse_llm_response(raw: str, chunks: list[dict]) -> tuple[str, list[Citation]]:
+    data = _extract_json(raw)
+
+    if not data or not isinstance(data, dict):
+        logger.warning(f"Failed to extract JSON from LLM response: {raw[:300]}")
         return raw, []
 
     answer = data.get("answer", "")
     raw_citations = data.get("citations", [])
 
-    chunk_map = {c["chunk_id"]: c for c in chunks}
+    if not answer:
+        logger.warning("LLM returned empty answer field")
+        answer = raw  # fallback to raw text
+
+    # Build chunk map — strip whitespace for safer matching
+    chunk_map = {c["chunk_id"].strip(): c for c in chunks}
+
+    logger.info(f"Chunk map keys: {list(chunk_map.keys())}")
+    logger.info(f"LLM cited chunk_ids: {[rc.get('chunk_id', '') for rc in raw_citations]}")
 
     citations = []
     for rc in raw_citations:
-        cid = rc.get("chunk_id", "")
+        cid = rc.get("chunk_id", "").strip()
         chunk = chunk_map.get(cid)
+
+        # Fallback: try partial matching if exact match fails
         if not chunk:
-            logger.warning(f"LLM cited unknown chunk_id: {cid}")
+            for key, val in chunk_map.items():
+                if key in cid or cid in key:
+                    chunk = val
+                    logger.info(f"Partial match: LLM cited '{cid}' matched to '{key}'")
+                    break
+
+        if not chunk:
+            logger.warning(f"LLM cited unknown chunk_id: '{cid}'")
             continue
+
         citations.append(Citation(
             doc_name = chunk["doc_name"],
             doc_id   = chunk["doc_id"],
@@ -100,6 +157,7 @@ def _parse_llm_response(raw: str, chunks: list[dict]) -> tuple[str, list[Citatio
             quote    = chunk["text"],
         ))
 
+    logger.info(f"Parsed {len(citations)} citations from LLM response")
     return answer, citations
 
 
@@ -119,11 +177,16 @@ def run_rag(request: AskRequest) -> AskResponse:
             citations = [],
         )
 
+    logger.info(f"Retrieved {len(chunks)} chunks for question: {request.question[:80]}")
+
     # 2. Configure Gemini
     genai.configure(api_key=settings.gemini_api_key)
     model = genai.GenerativeModel(
-        model_name     = settings.llm_model,
+        model_name         = settings.llm_model,
         system_instruction = SYSTEM_PROMPT,
+        generation_config  = {
+            "response_mime_type": "application/json",  # Force JSON output
+        },
     )
 
     # 3. Build context + current question
@@ -136,6 +199,7 @@ def run_rag(request: AskRequest) -> AskResponse:
     response = chat.send_message(current_message)
 
     raw_text = response.text
+    logger.info(f"Raw LLM response (first 300 chars): {raw_text[:300]}")
 
     # 5. Parse + map citations
     answer, citations = _parse_llm_response(raw_text, chunks)
