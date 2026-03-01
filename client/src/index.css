@@ -1941,24 +1941,45 @@ body {
   box-shadow: 0 0 0 1px rgba(212, 175, 55, 0.12);
 }
 
-/* PDF highlight overlay — positioned rects over canvas */
+/* PDF page container — canvas + invisible text layer on top */
 .pdf-page-container {
   position: relative;
   display: inline-block;
 }
 
-.pdf-highlight-overlay {
+/* pdfjs TextLayer — invisible text spans positioned over canvas.
+   This is the same approach real PDF viewers use for Ctrl+F search.
+   Spans are transparent; only highlights get a visible background. */
+.pdf-page-container .textLayer {
   position: absolute;
   top: 0;
   left: 0;
-  width: 100%;
-  height: 100%;
-  pointer-events: none;
+  overflow: hidden;
+  line-height: 1.0;
   z-index: 2;
 }
 
-.pdf-highlight-rect {
+.pdf-page-container .textLayer span,
+.pdf-page-container .textLayer br {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  transform-origin: 0% 0%;
+}
+
+/* Text selection appears as a subtle blue highlight */
+.pdf-page-container .textLayer span::selection {
+  background: rgba(0, 100, 200, 0.25);
+}
+
+/* Citation highlight on PDF text layer — amber/gold over the transparent text */
+.pdf-page-container .textLayer .citation-highlight {
+  color: transparent;
+  background-color: rgba(212, 175, 55, 0.45);
+  border-radius: 2px;
+  padding: 2px 0;
   animation: highlightPulse 1.5s ease-out;
+  box-shadow: 0 0 0 2px rgba(212, 175, 55, 0.15);
 }
 
 /* Empty state for preview panel when no file selected */

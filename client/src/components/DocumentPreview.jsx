@@ -105,17 +105,15 @@ function highlightInTextNodes(container, query) {
 
 // ── PDF Preview ────────────────────────────────────────────────────────────────
 function PdfPreview({ file, externalPage, highlightText }) {
-  const canvasRef    = useRef(null)
-  const overlayRef   = useRef(null)
+  const canvasRef     = useRef(null)
+  const textLayerRef  = useRef(null)
   const [pdf, setPdf]               = useState(null)
   const [page, setPage]             = useState(1)
   const [numPages, setNumPages]     = useState(0)
   const [scale, setScale]           = useState(1.2)
   const [loading, setLoading]       = useState(true)
   const [error, setError]           = useState(null)
-  // Store text items + viewport for highlighting
-  const [textItems, setTextItems]   = useState([])
-  const [vpState, setVpState]       = useState(null)
+  const [renderKey, setRenderKey]   = useState(0) // toggled after text layer renders
 
   // Jump to page when citation is clicked externally
   useEffect(() => {
@@ -146,106 +144,77 @@ function PdfPreview({ file, externalPage, highlightText }) {
     return () => { cancelled = true }
   }, [file])
 
-  // Render page canvas + extract text items
+  // Render page canvas + pdfjs text layer (like Ctrl+F in PDF viewers)
   useEffect(() => {
     if (!pdf || !canvasRef.current) return
     let cancelled = false
 
-    async function renderPage() {
+    async function render() {
       try {
+        const pdfjsLib = await import('pdfjs-dist')
         const pdfPage  = await pdf.getPage(page)
         if (cancelled) return
         const viewport = pdfPage.getViewport({ scale })
 
-        // ── Render canvas ──
+        // ── Canvas ──
         const canvas = canvasRef.current
         const ctx    = canvas.getContext('2d')
         canvas.height = viewport.height
         canvas.width  = viewport.width
         await pdfPage.render({ canvasContext: ctx, viewport }).promise
 
-        // ── Extract text items with positions ──
-        const textContent = await pdfPage.getTextContent()
-        if (cancelled) return
+        // ── Text layer — invisible spans positioned over canvas text ──
+        const tlDiv = textLayerRef.current
+        if (tlDiv && !cancelled) {
+          tlDiv.innerHTML = ''
+          tlDiv.style.width  = `${viewport.width}px`
+          tlDiv.style.height = `${viewport.height}px`
 
-        const items = textContent.items.filter(item => item.str && item.str.trim())
-        setTextItems(items)
-        setVpState(viewport)
+          const textContent = await pdfPage.getTextContent()
+          if (cancelled) return
+
+          // pdfjs v4 TextLayer class
+          if (pdfjsLib.TextLayer) {
+            const tl = new pdfjsLib.TextLayer({
+              textContentSource: textContent,
+              container: tlDiv,
+              viewport,
+            })
+            await tl.render()
+          } else if (pdfjsLib.renderTextLayer) {
+            // pdfjs v3 fallback
+            await pdfjsLib.renderTextLayer({
+              textContent,
+              container: tlDiv,
+              viewport,
+              textDivs: [],
+            }).promise
+          }
+
+          // Signal text layer ready → triggers highlight effect
+          setRenderKey(k => k + 1)
+        }
       } catch (e) {
         if (!cancelled) setError('Render error: ' + e.message)
       }
     }
-    renderPage()
+    render()
     return () => { cancelled = true }
   }, [pdf, page, scale])
 
-  // ── Highlight: draw rectangles over matching text items ──
+  // ── Highlight: search through text layer spans for the citation quote ──
   useEffect(() => {
-    const overlay = overlayRef.current
-    if (!overlay) return
+    const tlDiv = textLayerRef.current
+    if (!tlDiv) return
 
-    // Clear previous highlights
-    overlay.innerHTML = ''
+    clearHighlights(tlDiv)
+    if (!highlightText) return
 
-    if (!highlightText || !textItems.length || !vpState) return
-
-    const searchText = normalize(highlightText).slice(0, 120)
-    if (!searchText) return
-
-    // Concatenate text items with spaces between them
-    const fullText = textItems.map(item => item.str).join(' ')
-    const normalizedFull = normalize(fullText)
-
-    const matchIdx = normalizedFull.indexOf(searchText)
-    if (matchIdx === -1) return
-
-    const matchEnd = matchIdx + searchText.length
-
-    // Walk text items, track normalized char offset, find overlapping items
-    let charOffset = 0
-    let firstRect = null
-    const xScale = Math.abs(vpState.transform[0])
-    const yScale = Math.abs(vpState.transform[3])
-
-    for (const item of textItems) {
-      const itemNorm = normalize(item.str)
-      const itemStart = charOffset
-      const itemEnd = charOffset + itemNorm.length
-
-      // +1 for the space separator
-      charOffset = itemEnd + 1
-
-      // Check overlap
-      if (itemEnd <= matchIdx || itemStart >= matchEnd) continue
-
-      // This text item overlaps the match — draw a highlight rectangle
-      const [x, y] = vpState.convertToViewportPoint(item.transform[4], item.transform[5])
-      const fontSize = Math.abs(item.transform[0]) || Math.abs(item.transform[3]) || 12
-      const rectWidth = item.width * xScale
-      const rectHeight = fontSize * yScale * 1.3
-
-      const rect = document.createElement('div')
-      rect.className = 'pdf-highlight-rect'
-      rect.style.cssText = `
-        position: absolute;
-        left: ${x}px;
-        top: ${y - rectHeight}px;
-        width: ${rectWidth}px;
-        height: ${rectHeight}px;
-        background: rgba(212, 175, 55, 0.35);
-        border-radius: 2px;
-        pointer-events: none;
-        animation: highlightPulse 1.5s ease-out;
-      `
-      overlay.appendChild(rect)
-      if (!firstRect) firstRect = rect
+    const firstMark = highlightInTextNodes(tlDiv, highlightText)
+    if (firstMark) {
+      firstMark.scrollIntoView({ behavior: 'smooth', block: 'center' })
     }
-
-    // Scroll first highlight into view
-    if (firstRect) {
-      firstRect.scrollIntoView({ behavior: 'smooth', block: 'center' })
-    }
-  }, [highlightText, textItems, vpState])
+  }, [highlightText, renderKey])
 
   const zoom = (d) => setScale(s => Math.min(3, Math.max(0.5, +(s + d).toFixed(1))))
 
@@ -277,7 +246,7 @@ function PdfPreview({ file, externalPage, highlightText }) {
       <div className="pdf-canvas-scroll">
         <div className="pdf-page-container">
           <canvas ref={canvasRef} className="pdf-canvas" />
-          <div ref={overlayRef} className="pdf-highlight-overlay" />
+          <div ref={textLayerRef} className="textLayer" />
         </div>
       </div>
     </div>
