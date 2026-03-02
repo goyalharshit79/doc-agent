@@ -1,40 +1,29 @@
 """
-Vector store service.
+Vector store service — Qdrant hybrid search (dense + sparse).
 
-Responsibilities:
-  - Embed chunks using sentence-transformers
-  - Store vectors + text in Qdrant (via HTTP client → standalone server)
-  - Store lightweight doc metadata in Supabase (doc_id, name, chunk count, user_id)
-  - On upload: check Qdrant first → skip re-embedding if already present
-  - Similarity search: scoped to explicit doc_ids (always user-owned)
+Architecture:
+  - Single collection "documents" with named vectors:
+      dense  → BAAI/bge-small-en-v1.5  (384-dim, COSINE)
+      sparse → Qdrant/bm25             (BM25 keyword vectors)
+  - Payload indexes on: user_id, doc_id, doc_type
+  - Hybrid retrieval: dense + sparse prefetch → RRF fusion
+  - Strict metadata filtering on every search
+  - Supabase for lightweight doc metadata (doc_id, name, type, user_id)
 """
 
 import logging
 import uuid as _uuid
 from functools import lru_cache
 
-from qdrant_client import QdrantClient
-from qdrant_client.models import (
-    Distance,
-    PointStruct,
-    VectorParams,
-)
-from sentence_transformers import SentenceTransformer
+from qdrant_client import QdrantClient, models
 
 from app.core.config import get_settings
+from app.services.embeddings import EmbeddingService
 
 logger = logging.getLogger(__name__)
 
-# all-MiniLM-L6-v2 produces 384-dim vectors
-VECTOR_SIZE = 384
 
-
-@lru_cache
-def get_embedding_model() -> SentenceTransformer:
-    settings = get_settings()
-    logger.info(f"Loading embedding model: {settings.embedding_model}")
-    return SentenceTransformer(settings.embedding_model)
-
+# ── Qdrant client ─────────────────────────────────────────────────────────────
 
 @lru_cache
 def get_qdrant_client() -> QdrantClient:
@@ -43,46 +32,81 @@ def get_qdrant_client() -> QdrantClient:
     return QdrantClient(host=settings.qdrant_host, port=settings.qdrant_port)
 
 
-def _collection_name(doc_id: str) -> str:
-    """Qdrant collection names must match [a-zA-Z0-9_-]. Replace dots etc."""
-    return f"doc_{doc_id}".replace(".", "_").replace(" ", "_")
+# ── Collection management ─────────────────────────────────────────────────────
 
+def ensure_collection() -> str:
+    """
+    Create the unified 'documents' collection if it doesn't exist.
+    Sets up named vectors (dense + sparse) and payload indexes.
+    Returns the collection name.
+    """
+    settings = get_settings()
+    name     = settings.collection_name
+    client   = get_qdrant_client()
 
-def ensure_collection(doc_id: str) -> str:
-    """Create collection if it doesn't exist. Returns the collection name."""
-    client = get_qdrant_client()
-    name = _collection_name(doc_id)
-    if not client.collection_exists(name):
-        client.create_collection(
+    if client.collection_exists(name):
+        return name
+
+    logger.info(f"Creating collection '{name}' with hybrid vectors…")
+
+    client.create_collection(
+        collection_name=name,
+        vectors_config={
+            "dense": models.VectorParams(
+                size=384,
+                distance=models.Distance.COSINE,
+            ),
+        },
+        sparse_vectors_config={
+            "sparse": models.SparseVectorParams(
+                modifier=models.Modifier.IDF,   # complete BM25 scoring
+            ),
+        },
+    )
+
+    # Payload indexes → fast filtered search
+    for field in ("user_id", "doc_id", "doc_type"):
+        client.create_payload_index(
             collection_name=name,
-            vectors_config=VectorParams(size=VECTOR_SIZE, distance=Distance.COSINE),
+            field_name=field,
+            field_schema=models.PayloadSchemaType.KEYWORD,
         )
-        logger.info(f"Created Qdrant collection: {name}")
+
+    logger.info(f"Collection '{name}' ready with dense + sparse vectors + 3 payload indexes")
     return name
 
 
-def collection_count(doc_id: str) -> int:
-    """Return number of points in a collection (0 if it doesn't exist)."""
-    client = get_qdrant_client()
-    name = _collection_name(doc_id)
+def doc_vectors_exist(doc_id: str) -> bool:
+    """Check if any vectors already exist for this doc_id (idempotency check)."""
+    settings = get_settings()
+    client   = get_qdrant_client()
+    name     = settings.collection_name
+
     if not client.collection_exists(name):
-        return 0
-    info = client.get_collection(name)
-    return info.points_count or 0
+        return False
+
+    result = client.scroll(
+        collection_name=name,
+        scroll_filter=models.Filter(must=[
+            models.FieldCondition(key="doc_id", match=models.MatchValue(value=doc_id)),
+        ]),
+        limit=1,
+        with_payload=False,
+    )
+    return len(result[0]) > 0
 
 
-# ── Supabase helpers ───────────────────────────────────────────────────────────
+# ── Supabase helpers ──────────────────────────────────────────────────────────
 
-def get_supabase():
+def _get_supabase():
     from supabase import create_client
     settings = get_settings()
     return create_client(settings.supabase_url, settings.supabase_service_key)
 
 
 def doc_exists_for_user(doc_id: str, user_id: str) -> bool:
-    """Check if this user has already processed this document."""
     try:
-        sb = get_supabase()
+        sb = _get_supabase()
         result = (
             sb.table("documents")
             .select("doc_id")
@@ -97,12 +121,11 @@ def doc_exists_for_user(doc_id: str, user_id: str) -> bool:
 
 
 def get_user_documents(user_id: str) -> list[dict]:
-    """Return all documents belonging to a user."""
     try:
-        sb = get_supabase()
+        sb = _get_supabase()
         result = (
             sb.table("documents")
-            .select("doc_id, doc_name, num_chunks, created_at")
+            .select("doc_id, doc_name, doc_type, num_chunks, created_at")
             .eq("user_id", user_id)
             .order("created_at", desc=True)
             .execute()
@@ -113,12 +136,13 @@ def get_user_documents(user_id: str) -> list[dict]:
         return []
 
 
-def save_doc_meta(doc_id: str, doc_name: str, num_chunks: int, user_id: str):
+def save_doc_meta(doc_id: str, doc_name: str, num_chunks: int, user_id: str, doc_type: str = "general"):
     try:
-        sb = get_supabase()
+        sb = _get_supabase()
         sb.table("documents").upsert({
             "doc_id":     doc_id,
             "doc_name":   doc_name,
+            "doc_type":   doc_type,
             "num_chunks": num_chunks,
             "user_id":    user_id,
         }).execute()
@@ -126,113 +150,219 @@ def save_doc_meta(doc_id: str, doc_name: str, num_chunks: int, user_id: str):
         logger.warning(f"Supabase doc meta save failed: {e}")
 
 
-# ── Core operations ────────────────────────────────────────────────────────────
+# ── Embed & store ─────────────────────────────────────────────────────────────
 
 def embed_and_store(chunks: list[dict]) -> int:
+    """
+    Generate dense + sparse embeddings for all chunks and upsert
+    into the unified Qdrant collection with full metadata payloads.
+    """
     if not chunks:
         return 0
 
-    model = get_embedding_model()
+    col_name = ensure_collection()
+    emb_svc  = EmbeddingService.get()
+    client   = get_qdrant_client()
+
     texts = [c["text"] for c in chunks]
+    logger.info(f"Generating dual embeddings for {len(texts)} chunks…")
 
-    logger.info(f"Embedding {len(texts)} chunks...")
-    embeddings = model.encode(texts, batch_size=32, show_progress_bar=False).tolist()
+    dense_vecs, sparse_vecs = emb_svc.encode_dual(texts)
 
-    from itertools import groupby
-    sorted_chunks = sorted(zip(chunks, embeddings), key=lambda x: x[0]["doc_id"])
+    points = []
+    for i, chunk in enumerate(chunks):
+        point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, chunk["chunk_id"]))
 
-    for doc_id, group in groupby(sorted_chunks, key=lambda x: x[0]["doc_id"]):
-        col_name = ensure_collection(doc_id)
-        group = list(group)
+        sv = sparse_vecs[i]
+        points.append(models.PointStruct(
+            id=point_id,
+            vector={
+                "dense":  dense_vecs[i],
+                "sparse": models.SparseVector(
+                    indices=sv.indices.tolist(),
+                    values=sv.values.tolist(),
+                ),
+            },
+            payload={
+                "chunk_id":    chunk["chunk_id"],
+                "text":        chunk["text"],
+                "doc_id":      chunk["doc_id"],
+                "doc_name":    chunk["doc_name"],
+                "doc_type":    chunk.get("doc_type", "general"),
+                "user_id":     chunk.get("user_id", ""),
+                "page_number": chunk.get("page_number"),
+                "heading":     chunk.get("heading") or "",
+            },
+        ))
 
-        points = []
-        for chunk, emb in group:
-            # Qdrant requires UUID or int IDs — generate a deterministic UUID from chunk_id
-            point_id = str(_uuid.uuid5(_uuid.NAMESPACE_DNS, chunk["chunk_id"]))
-            points.append(PointStruct(
-                id=point_id,
-                vector=emb,
-                payload={
-                    "chunk_id":        chunk["chunk_id"],
-                    "text":            chunk["text"],
-                    "page":            str(chunk.get("page") or ""),
-                    "heading":         chunk.get("heading") or "",
-                    "paragraph_index": str(chunk.get("paragraph_index") or ""),
-                    "doc_name":        chunk["doc_name"],
-                },
-            ))
-
-        # Qdrant upsert handles batching internally
-        client = get_qdrant_client()
-        client.upsert(collection_name=col_name, points=points)
-
-    return len(chunks)
+    # Qdrant upsert handles batching internally
+    client.upsert(collection_name=col_name, points=points, wait=True)
+    logger.info(f"Upserted {len(points)} points into '{col_name}'")
+    return len(points)
 
 
-def similarity_search(query: str, doc_ids: list[str], top_k: int = 6) -> list[dict]:
+# ── Hybrid search ─────────────────────────────────────────────────────────────
+
+def hybrid_search(
+    query: str,
+    user_id: str,
+    doc_ids: list[str],
+    top_k: int | None = None,
+) -> list:
     """
-    Search is always scoped to explicit doc_ids.
-    Since doc_ids are validated against user_id at the route level,
-    this never touches another user's data.
+    Hybrid retrieval: dense + sparse with RRF fusion.
+    Strict metadata filtering ensures user_id AND doc_id(s) match.
+    Returns list of Qdrant ScoredPoint objects.
     """
-    model = get_embedding_model()
-    query_embedding = model.encode([query])[0].tolist()
+    if top_k is None:
+        top_k = get_settings().retrieval_top_k
 
-    results = []
-    per_doc_k = max(2, top_k // len(doc_ids))
-    client = get_qdrant_client()
+    col_name = ensure_collection()
+    emb_svc  = EmbeddingService.get()
+    client   = get_qdrant_client()
 
-    for doc_id in doc_ids:
-        try:
-            col_name = _collection_name(doc_id)
-            if not client.collection_exists(col_name):
-                logger.warning(f"Collection {col_name} not found, skipping")
-                continue
+    # Encode query
+    dense_qv  = emb_svc.encode_query_dense(query)
+    sparse_qv = emb_svc.encode_query_sparse(query)
 
-            hits = client.query_points(
-                collection_name=col_name,
-                query=query_embedding,
-                limit=per_doc_k,
-                with_payload=True,
-            ).points
+    # Strict metadata filter
+    must_filter = models.Filter(must=[
+        models.FieldCondition(
+            key="user_id",
+            match=models.MatchValue(value=user_id),
+        ),
+        models.FieldCondition(
+            key="doc_id",
+            match=models.MatchAny(any=doc_ids),
+        ),
+    ])
 
-            for hit in hits:
-                payload = hit.payload or {}
-                results.append({
-                    "chunk_id": payload.get("chunk_id", str(hit.id)),
-                    "doc_id":   doc_id,
-                    "doc_name": payload.get("doc_name", ""),
-                    "page":     int(payload["page"]) if payload.get("page") and payload["page"].strip() else None,
-                    "heading":  payload.get("heading") or None,
-                    "text":     payload.get("text", ""),
-                    "score":    hit.score,
-                })
-        except Exception as e:
-            logger.warning(f"Search failed for doc {doc_id}: {e}")
+    sparse_vector = models.SparseVector(
+        indices=sparse_qv.indices.tolist(),
+        values=sparse_qv.values.tolist(),
+    )
 
-    results.sort(key=lambda x: x["score"], reverse=True)
-    return results[:top_k]
+    results = client.query_points(
+        collection_name=col_name,
+        prefetch=[
+            # Dense semantic search
+            models.Prefetch(
+                query=dense_qv,
+                using="dense",
+                limit=top_k + 5,       # slight overfetch for better fusion
+                filter=must_filter,
+            ),
+            # Sparse keyword search (BM25)
+            models.Prefetch(
+                query=sparse_vector,
+                using="sparse",
+                limit=top_k + 5,
+                filter=must_filter,
+            ),
+        ],
+        query=models.FusionQuery(fusion=models.Fusion.RRF),
+        limit=top_k,
+        with_payload=True,
+    )
+
+    logger.info(f"Hybrid search returned {len(results.points)} results for '{query[:60]}'")
+    return results.points
 
 
-# ── Upload orchestrator ────────────────────────────────────────────────────────
+def keyword_search(
+    query: str,
+    user_id: str,
+    doc_ids: list[str],
+    top_k: int = 10,
+) -> list:
+    """
+    Pure sparse / keyword search — for exact term matching.
+    Uses BM25 sparse vectors only (no semantic component).
+    """
+    col_name = ensure_collection()
+    emb_svc  = EmbeddingService.get()
+    client   = get_qdrant_client()
 
-def process_upload(chunks: list[dict], doc_id: str, doc_name: str, user_id: str) -> dict:
-    # Check if vectors already exist in Qdrant
-    existing_count = collection_count(doc_id)
-    already_existed = existing_count > 0
+    sparse_qv = emb_svc.encode_query_sparse(query)
+
+    must_filter = models.Filter(must=[
+        models.FieldCondition(
+            key="user_id",
+            match=models.MatchValue(value=user_id),
+        ),
+        models.FieldCondition(
+            key="doc_id",
+            match=models.MatchAny(any=doc_ids),
+        ),
+    ])
+
+    results = client.query_points(
+        collection_name=col_name,
+        query=models.SparseVector(
+            indices=sparse_qv.indices.tolist(),
+            values=sparse_qv.values.tolist(),
+        ),
+        using="sparse",
+        query_filter=must_filter,
+        limit=top_k,
+        with_payload=True,
+    )
+
+    logger.info(f"Keyword search returned {len(results.points)} results for '{query[:60]}'")
+    return results.points
+
+
+# ── Delete ────────────────────────────────────────────────────────────────────
+
+def delete_document_vectors(doc_id: str, user_id: str):
+    """Remove all vectors for a specific document (for re-upload or cleanup)."""
+    settings = get_settings()
+    client   = get_qdrant_client()
+    name     = settings.collection_name
+
+    if not client.collection_exists(name):
+        return
+
+    client.delete(
+        collection_name=name,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(must=[
+                models.FieldCondition(key="doc_id", match=models.MatchValue(value=doc_id)),
+                models.FieldCondition(key="user_id", match=models.MatchValue(value=user_id)),
+            ])
+        ),
+    )
+    logger.info(f"Deleted vectors for doc_id={doc_id}")
+
+
+# ── Upload orchestrator ───────────────────────────────────────────────────────
+
+def process_upload(
+    chunks: list[dict],
+    doc_id: str,
+    doc_name: str,
+    user_id: str,
+    doc_type: str = "general",
+) -> dict:
+    """
+    Full upload pipeline: check idempotency → embed → store → save meta.
+    """
+    already_existed = doc_vectors_exist(doc_id)
 
     if already_existed:
-        logger.info(f"Doc {doc_id} already in Qdrant ({existing_count} vectors) — skipping embed")
+        logger.info(f"Doc {doc_id} already in Qdrant — skipping embed")
+        num_chunks = len(chunks)
     else:
-        embed_and_store(chunks)
-        logger.info(f"Embedded {len(chunks)} chunks for doc {doc_id}")
+        num_chunks = embed_and_store(chunks)
+        logger.info(f"Embedded {num_chunks} chunks for doc {doc_id}")
 
-    # Always ensure Supabase has the doc metadata (lightweight, one row)
-    save_doc_meta(doc_id, doc_name, len(chunks) if not already_existed else existing_count, user_id)
+    # Always upsert Supabase metadata
+    save_doc_meta(doc_id, doc_name, num_chunks, user_id, doc_type)
 
     return {
         "doc_id":          doc_id,
         "doc_name":        doc_name,
-        "num_chunks":      len(chunks) if not already_existed else existing_count,
+        "doc_type":        doc_type,
+        "num_chunks":      num_chunks,
         "already_existed": already_existed,
     }

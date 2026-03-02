@@ -48,12 +48,13 @@ export async function login(email, password) {
 
 // ── Documents ──────────────────────────────────────────────────────────────────
 
-export async function uploadDocument(file) {
+export async function uploadDocument(file, docType = 'general') {
   const token = localStorage.getItem('docagent_token')
   if (!token) throw new Error('Not authenticated — please log in')
 
   const form = new FormData()
   form.append('file', file)
+  form.append('doc_type', docType)
   const res = await fetch(`${BASE}/upload`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}` },

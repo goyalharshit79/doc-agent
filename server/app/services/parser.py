@@ -1,217 +1,275 @@
 """
-Parsing pipeline — extracts structured chunks from PDF, DOCX, and TXT files.
+Enterprise parsing pipeline — unstructured + adaptive chunking.
 
-Every chunk carries:
-  chunk_id        : "<doc_id>_p<page>_c<index>"
-  doc_id          : hash identifier for the document
-  doc_name        : original filename
-  page            : page number (1-indexed, None for TXT)
-  heading         : nearest heading above this chunk (if any)
-  paragraph_index : position within the page/section
-  text            : the actual text content
+Flow:
+  1. Parse any supported file into structured elements (unstructured library)
+  2. Convert elements into clean Markdown (preserves tables, headers)
+  3. Split Markdown into chunks using doc_type-aware strategy
+  4. Attach strict metadata to every chunk:
+       user_id, doc_id, doc_type, page_number, heading
+
+Supported:  PDF (fast strategy — no OCR deps), DOCX, TXT, MD
 """
 
 import hashlib
+import logging
 import re
-from typing import BinaryIO
+from io import BytesIO
+
+from app.core.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def make_doc_id(filename: str, size: int) -> str:
     """Stable ID from filename + size — same file always gets same ID."""
     return hashlib.sha256(f"{filename}:{size}".encode()).hexdigest()[:16]
 
 
-def _split_into_sentences(text: str) -> list[str]:
-    return [s.strip() for s in re.split(r'(?<=[.!?])\s+', text) if s.strip()]
+# ── Stage 1: Parse to Markdown elements ───────────────────────────────────────
 
-
-def _chunk_text(text: str, chunk_size: int = 400, overlap: int = 50) -> list[str]:
+def _parse_to_elements(file_bytes: bytes, filename: str) -> list[dict]:
     """
-    Split text into overlapping chunks by word count.
-    Overlap is in words to avoid cutting context at boundaries.
+    Use `unstructured` to partition any document into structured elements.
+    Returns list of dicts with: text, page, category, is_heading.
     """
-    words = text.split()
-    chunks, start = [], 0
-    while start < len(words):
-        end = min(start + chunk_size, len(words))
-        chunks.append(" ".join(words[start:end]))
-        start += chunk_size - overlap
-    return chunks
+    from unstructured.partition.auto import partition
+
+    elements = partition(
+        file=BytesIO(file_bytes),
+        metadata_filename=filename,
+        strategy="fast",           # no OCR / layout-model deps on Windows
+    )
+
+    parts = []
+    for el in elements:
+        page = getattr(el.metadata, "page_number", None)
+        cat  = el.category  # Title, NarrativeText, Table, ListItem, Header, …
+
+        # Convert to Markdown notation
+        if cat == "Title":
+            md = f"## {el.text}"
+        elif cat == "Header":
+            md = f"# {el.text}"
+        elif cat == "Table":
+            # Prefer HTML table repr (rendered by preview); fall back to plain
+            html = getattr(el.metadata, "text_as_html", None)
+            md = html if html else el.text
+        elif cat == "ListItem":
+            md = f"- {el.text}"
+        else:
+            md = el.text
+
+        if not md or not md.strip():
+            continue
+
+        parts.append({
+            "text":       md,
+            "page":       page,
+            "category":   cat,
+            "is_heading": cat in ("Title", "Header"),
+        })
+
+    return parts
 
 
-# ── PDF ────────────────────────────────────────────────────────────────────────
+# ── Stage 2: Adaptive chunking ───────────────────────────────────────────────
 
-def parse_pdf(file_bytes: bytes, doc_id: str, doc_name: str) -> list[dict]:
-    import pdfplumber
+def _group_into_sections(parts: list[dict]) -> list[dict]:
+    """
+    Group elements by heading boundaries.
+    Returns list of section dicts: { heading, page, texts: [(text, page), …] }
+    """
+    sections = []
+    current = {"heading": None, "page": None, "texts": []}
 
+    for p in parts:
+        if p["is_heading"]:
+            # Flush current section
+            if current["texts"]:
+                sections.append(current)
+            current = {
+                "heading": p["text"].lstrip("#").strip(),
+                "page":    p["page"],
+                "texts":   [],
+            }
+        else:
+            if current["page"] is None and p["page"]:
+                current["page"] = p["page"]
+            current["texts"].append((p["text"], p["page"]))
+
+    if current["texts"]:
+        sections.append(current)
+
+    return sections
+
+
+def _preprocess_contract(parts: list[dict]) -> list[dict]:
+    """
+    For contracts: detect numbered clauses / articles and promote them
+    to heading boundaries so they never get split mid-clause.
+    Patterns: "1.", "1.1", "Section 1", "Article II", "Clause 3.2"
+    """
+    CLAUSE_RE = re.compile(
+        r"^(?:Section|Article|Clause|SECTION|ARTICLE|CLAUSE)?\s*"
+        r"(?:\d+[\.\)]\d*[\.\)]?|[IVXLCDM]+[\.\)])\s",
+        re.IGNORECASE,
+    )
+    processed = []
+    for p in parts:
+        if not p["is_heading"] and CLAUSE_RE.match(p["text"][:60]):
+            processed.append({**p, "is_heading": True})
+        else:
+            processed.append(p)
+    return processed
+
+
+def _chunk_sections(
+    sections: list[dict],
+    max_words: int,
+    overlap_words: int,
+    doc_type: str,
+    doc_id: str,
+    doc_name: str,
+    user_id: str,
+) -> list[dict]:
+    """
+    Chunk sections respecting word limits, with overlap for context continuity.
+    For resumes: allow 50% overshoot to keep sections intact.
+    """
     chunks = []
-    chunk_counter = 0
+    counter = 0
 
-    with pdfplumber.open(file_bytes) as pdf:
-        for page_num, page in enumerate(pdf.pages, start=1):
-            text = page.extract_text()
-            if not text:
+    for sec in sections:
+        heading    = sec["heading"]
+        chunk_page = sec["page"]
+
+        # ── Resume heuristic: keep small sections whole ───────────────────
+        if doc_type == "resume":
+            combined = "\n\n".join(t for t, _ in sec["texts"])
+            if len(combined.split()) <= int(max_words * 1.5):
+                if combined.strip():
+                    chunks.append({
+                        "chunk_id":    f"{doc_id}_p{chunk_page or 0}_c{counter}",
+                        "text":        combined,
+                        "doc_id":      doc_id,
+                        "doc_name":    doc_name,
+                        "doc_type":    doc_type,
+                        "user_id":     user_id,
+                        "page_number": chunk_page,
+                        "heading":     heading,
+                    })
+                    counter += 1
                 continue
 
-            lines = text.split("\n")
-            current_heading = None
-            paragraph_buffer = []
-            para_index = 0
+        # ── Standard chunking with overlap ────────────────────────────────
+        buffer_texts: list[str] = []
+        buffer_words = 0
 
-            for line in lines:
-                stripped = line.strip()
-                if not stripped:
-                    # flush buffer on blank line
-                    if paragraph_buffer:
-                        para_text = " ".join(paragraph_buffer)
-                        for sub in _chunk_text(para_text):
-                            chunks.append({
-                                "chunk_id":        f"{doc_id}_p{page_num}_c{chunk_counter}",
-                                "doc_id":          doc_id,
-                                "doc_name":        doc_name,
-                                "page":            page_num,
-                                "heading":         current_heading,
-                                "paragraph_index": para_index,
-                                "text":            sub,
-                            })
-                            chunk_counter += 1
-                        para_index += 1
-                        paragraph_buffer = []
-                    continue
+        for text, page in sec["texts"]:
+            text_words = len(text.split())
 
-                # Heuristic: short ALL-CAPS or title-case short lines are headings
-                if len(stripped) < 80 and (stripped.isupper() or re.match(r'^[A-Z][^a-z]{0,5}', stripped)):
-                    if paragraph_buffer:
-                        para_text = " ".join(paragraph_buffer)
-                        for sub in _chunk_text(para_text):
-                            chunks.append({
-                                "chunk_id":        f"{doc_id}_p{page_num}_c{chunk_counter}",
-                                "doc_id":          doc_id,
-                                "doc_name":        doc_name,
-                                "page":            page_num,
-                                "heading":         current_heading,
-                                "paragraph_index": para_index,
-                                "text":            sub,
-                            })
-                            chunk_counter += 1
-                        para_index += 1
-                        paragraph_buffer = []
-                    current_heading = stripped
-                else:
-                    paragraph_buffer.append(stripped)
-
-            # flush remaining buffer
-            if paragraph_buffer:
-                para_text = " ".join(paragraph_buffer)
-                for sub in _chunk_text(para_text):
+            if buffer_words + text_words > max_words and buffer_texts:
+                # Flush current buffer as a chunk
+                chunk_text = "\n\n".join(buffer_texts)
+                if chunk_text.strip():
                     chunks.append({
-                        "chunk_id":        f"{doc_id}_p{page_num}_c{chunk_counter}",
-                        "doc_id":          doc_id,
-                        "doc_name":        doc_name,
-                        "page":            page_num,
-                        "heading":         current_heading,
-                        "paragraph_index": para_index,
-                        "text":            sub,
+                        "chunk_id":    f"{doc_id}_p{chunk_page or 0}_c{counter}",
+                        "text":        chunk_text,
+                        "doc_id":      doc_id,
+                        "doc_name":    doc_name,
+                        "doc_type":    doc_type,
+                        "user_id":     user_id,
+                        "page_number": chunk_page,
+                        "heading":     heading,
                     })
-                    chunk_counter += 1
+                    counter += 1
+
+                # Overlap: carry last N words into the next chunk
+                all_words = chunk_text.split()
+                if len(all_words) > overlap_words:
+                    carry = " ".join(all_words[-overlap_words:])
+                    buffer_texts = [carry]
+                    buffer_words = overlap_words
+                else:
+                    buffer_texts = []
+                    buffer_words = 0
+
+            buffer_texts.append(text)
+            buffer_words += text_words
+            if page:
+                chunk_page = page
+
+        # Flush remainder
+        if buffer_texts:
+            chunk_text = "\n\n".join(buffer_texts)
+            if chunk_text.strip():
+                chunks.append({
+                    "chunk_id":    f"{doc_id}_p{chunk_page or 0}_c{counter}",
+                    "text":        chunk_text,
+                    "doc_id":      doc_id,
+                    "doc_name":    doc_name,
+                    "doc_type":    doc_type,
+                    "user_id":     user_id,
+                    "page_number": chunk_page,
+                    "heading":     heading,
+                })
+                counter += 1
 
     return chunks
 
 
-# ── DOCX ───────────────────────────────────────────────────────────────────────
+# ── Main entry point ──────────────────────────────────────────────────────────
 
-def parse_docx(file_bytes: bytes, doc_id: str, doc_name: str) -> list[dict]:
-    import io
-    from docx import Document
-    from docx.oxml.ns import qn
-
-    doc = Document(io.BytesIO(file_bytes))
-    chunks = []
-    chunk_counter = 0
-    current_heading = None
-    para_index = 0
-    # DOCX has no real page numbers without rendering — we use section index instead
-    section_index = 0
-
-    for para in doc.paragraphs:
-        text = para.text.strip()
-        if not text:
-            continue
-
-        style = para.style.name or ""
-        is_heading = style.lower().startswith("heading")
-
-        if is_heading:
-            current_heading = text
-            section_index += 1
-            para_index = 0
-            continue
-
-        for sub in _chunk_text(text):
-            chunks.append({
-                "chunk_id":        f"{doc_id}_s{section_index}_c{chunk_counter}",
-                "doc_id":          doc_id,
-                "doc_name":        doc_name,
-                "page":            None,          # DOCX: no reliable page number
-                "heading":         current_heading,
-                "paragraph_index": para_index,
-                "text":            sub,
-            })
-            chunk_counter += 1
-        para_index += 1
-
-    return chunks
-
-
-# ── TXT / MD ───────────────────────────────────────────────────────────────────
-
-def parse_text(file_bytes: bytes, doc_id: str, doc_name: str) -> list[dict]:
-    text = file_bytes.decode("utf-8", errors="replace")
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
-    chunks = []
-    chunk_counter = 0
-    current_heading = None
-
-    for para_index, para in enumerate(paragraphs):
-        # Markdown headings
-        if para.startswith("#"):
-            current_heading = para.lstrip("#").strip()
-            continue
-
-        for sub in _chunk_text(para):
-            chunks.append({
-                "chunk_id":        f"{doc_id}_c{chunk_counter}",
-                "doc_id":          doc_id,
-                "doc_name":        doc_name,
-                "page":            None,
-                "heading":         current_heading,
-                "paragraph_index": para_index,
-                "text":            sub,
-            })
-            chunk_counter += 1
-
-    return chunks
-
-
-# ── Dispatcher ─────────────────────────────────────────────────────────────────
-
-def parse_document(file_bytes: bytes, filename: str, file_size: int) -> tuple[str, list[dict]]:
+def parse_document(
+    file_bytes: bytes,
+    filename: str,
+    file_size: int,
+    doc_type: str = "general",
+    user_id: str = "",
+) -> tuple[str, list[dict]]:
     """
-    Entry point. Returns (doc_id, chunks).
+    Full pipeline: file bytes → (doc_id, list[chunk_dict]).
+
+    Every chunk dict contains:
+      chunk_id, text, doc_id, doc_name, doc_type, user_id, page_number, heading
     """
     doc_id = make_doc_id(filename, file_size)
-    ext = filename.rsplit(".", 1)[-1].lower()
+    settings = get_settings()
 
-    if ext == "pdf":
-        import io
-        chunks = parse_pdf(io.BytesIO(file_bytes), doc_id, filename)
-    elif ext == "docx":
-        chunks = parse_docx(file_bytes, doc_id, filename)
-    elif ext in ("txt", "md"):
-        chunks = parse_text(file_bytes, doc_id, filename)
-    else:
-        raise ValueError(f"Unsupported file type: {ext}")
+    # ── 1. Parse ──────────────────────────────────────────────────────────
+    logger.info(f"Parsing {filename} (type={doc_type}, {file_size} bytes)")
+    parts = _parse_to_elements(file_bytes, filename)
 
+    if not parts:
+        logger.warning(f"No content extracted from {filename}")
+        return doc_id, []
+
+    logger.info(f"Extracted {len(parts)} elements from {filename}")
+
+    # ── 2. Doc-type preprocessing ─────────────────────────────────────────
+    if doc_type == "contract":
+        parts = _preprocess_contract(parts)
+
+    # ── 3. Group into sections by heading ─────────────────────────────────
+    sections = _group_into_sections(parts)
+
+    # ── 4. Adaptive chunk ─────────────────────────────────────────────────
+    cfg = settings.chunk_config.get(doc_type, settings.chunk_config["general"])
+    chunks = _chunk_sections(
+        sections      = sections,
+        max_words     = cfg["size"],
+        overlap_words = cfg["overlap"],
+        doc_type      = doc_type,
+        doc_id        = doc_id,
+        doc_name      = filename,
+        user_id       = user_id,
+    )
+
+    logger.info(
+        f"Chunked {filename} → {len(chunks)} chunks "
+        f"(strategy={doc_type}, max_words={cfg['size']}, overlap={cfg['overlap']})"
+    )
     return doc_id, chunks

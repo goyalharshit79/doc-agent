@@ -51,6 +51,7 @@ export default function App() {
   // status: 'pending' | 'uploading' | 'processed' | 'error'
   const [files, setFiles]             = useState([])
   const [activeIndex, setActiveIndex] = useState(0)
+  const [docType, setDocType]         = useState('general')   // doc_type for uploads
   const addInputRef = useRef(null)
 
   // Derived state
@@ -90,7 +91,7 @@ export default function App() {
     for (const { index, file } of pendingEntries) {
       if (!file) continue
       try {
-        const res = await uploadDocument(file)
+        const res = await uploadDocument(file, docType)
         setFiles(prev => prev.map((e, i) =>
           i === index ? { ...e, docId: res.doc_id, status: 'processed', error: null } : e
         ))
@@ -190,7 +191,7 @@ export default function App() {
                     Upload PDFs, Word docs, or text files. Ask questions, study, extract — all with exact citations.
                   </p>
                 </div>
-                <UploadZone onFilesAdded={handleFilesAdded} />
+                <UploadZone onFilesAdded={handleFilesAdded} docType={docType} onDocTypeChange={setDocType} />
               </div>
             ) : (
               <div className={`workspace${!sidebarOpen ? ' workspace--sidebar-hidden' : ''}`}>

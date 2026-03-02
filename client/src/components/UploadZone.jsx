@@ -3,7 +3,15 @@ import { UploadCloud } from 'lucide-react'
 
 const ACCEPTED_EXTENSIONS = ['.pdf', '.docx', '.txt', '.md']
 
-export default function UploadZone({ onFilesAdded }) {
+const DOC_TYPES = [
+  { value: 'general',        label: 'General' },
+  { value: 'contract',       label: 'Contract' },
+  { value: 'medical_report', label: 'Medical Report' },
+  { value: 'book',           label: 'Book' },
+  { value: 'resume',         label: 'Resume' },
+]
+
+export default function UploadZone({ onFilesAdded, docType = 'general', onDocTypeChange }) {
   const [isDragging, setIsDragging] = useState(false)
 
   const processFiles = useCallback((fileList) => {
@@ -21,6 +29,24 @@ export default function UploadZone({ onFilesAdded }) {
 
   return (
     <div className="upload-wrapper">
+      {/* ── Document type selector ─────────────────────────────────────── */}
+      <div className="upload-doctype-row">
+        <label className="upload-doctype-label">Document type</label>
+        <div className="upload-doctype-pills">
+          {DOC_TYPES.map(dt => (
+            <button
+              key={dt.value}
+              className={`upload-doctype-pill${docType === dt.value ? ' upload-doctype-pill--active' : ''}`}
+              onClick={() => onDocTypeChange?.(dt.value)}
+              type="button"
+            >
+              {dt.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* ── Drop zone ──────────────────────────────────────────────────── */}
       <label
         className={`upload-zone${isDragging ? ' upload-zone--dragging' : ''}`}
         onDragOver={onDragOver}
