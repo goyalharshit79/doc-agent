@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
-import { MessageSquare, Send, FileText, Eye, X, Upload } from 'lucide-react'
+import { MessageSquare, Send, FileText, Eye, X, Upload, Trash2, FolderOpen } from 'lucide-react'
 import { ask } from '../api'
 import DocumentPreview from './DocumentPreview'
 
@@ -50,11 +50,19 @@ function ChatMessage({ msg, onCitationClick, activeCitationId }) {
 }
 
 // ── Main AskPage ──────────────────────────────────────────────────────────────
-export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
-  const [messages, setMessages]             = useState([])
+export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDocs }) {
+  // ── Chat persistence via sessionStorage ───────────────────────────────────
+  const [messages, setMessages] = useState(() => {
+    try {
+      const stored = sessionStorage.getItem('docagent_chat_messages')
+      return stored ? JSON.parse(stored) : []
+    } catch {
+      return []
+    }
+  })
+
   const [input, setInput]                   = useState('')
   const [isLoading, setIsLoading]           = useState(false)
-  const [previewDocId, setPreviewDocId]     = useState(null)
   const [previewPage, setPreviewPage]       = useState(null)
   const [highlightQuote, setHighlightQuote] = useState(null)
   const [activeCitationId, setActiveCitationId] = useState(null)
@@ -62,12 +70,15 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
   const messagesEndRef = useRef(null)
   const inputRef       = useRef(null)
 
-  // Default preview to first processed file
+  // Sync messages to sessionStorage
   useEffect(() => {
-    if (!previewDocId && processedFiles.length > 0) {
-      setPreviewDocId(processedFiles[0].docId)
+    try {
+      const toStore = messages.length > 100 ? messages.slice(-100) : messages
+      sessionStorage.setItem('docagent_chat_messages', JSON.stringify(toStore))
+    } catch {
+      sessionStorage.removeItem('docagent_chat_messages')
     }
-  }, [processedFiles, previewDocId])
+  }, [messages])
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -79,9 +90,15 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
     inputRef.current?.focus()
   }, [])
 
+  // ── Clear chat ────────────────────────────────────────────────────────────
+  const handleClearChat = () => {
+    setMessages([])
+    sessionStorage.removeItem('docagent_chat_messages')
+  }
+
   // ── Send message ──────────────────────────────────────────────────────────
   const handleSend = async () => {
-    if (!input.trim() || isLoading) return
+    if (!input.trim() || isLoading || !activeDoc) return
 
     const question = input.trim()
     setInput('')
@@ -92,10 +109,10 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
     setMessages(prev => [...prev, userMsg])
     setIsLoading(true)
 
-    const docIds = processedFiles.map(f => f.docId)
+    // Single-doc querying — only the active document
+    const docIds = [activeDoc.doc_id]
 
     try {
-      // Build conversation history from last 10 messages
       const allMsgs = [...messages, userMsg]
       const conversationHistory = allMsgs.slice(-10).map(m => ({
         role: m.role,
@@ -123,16 +140,18 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
 
   // ── Citation click → jump preview + highlight ───────────────────────────────
   const handleCitationClick = (citation) => {
-    const fileEntry = files.find(f => f.docId === citation.doc_id)
-    if (!fileEntry) return
-
-    setPreviewDocId(citation.doc_id)
-    setHighlightQuote(citation.quote || null)
     setActiveCitationId(citation.chunk_id || null)
 
-    if (citation.page) {
-      setPreviewPage({ page: citation.page, ts: Date.now() })
+    // Only set highlight/page if we have the file blob for preview
+    if (activeDoc?.file) {
+      setHighlightQuote(citation.quote || null)
+      if (citation.page) {
+        setPreviewPage({ page: citation.page, ts: Date.now() })
+      } else {
+        setPreviewPage(null)
+      }
     } else {
+      setHighlightQuote(null)
       setPreviewPage(null)
     }
 
@@ -142,22 +161,26 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
     }
   }
 
-  // Find the File object for the current preview
-  const previewFile = files.find(f => f.docId === previewDocId)
+  const hasFileBlob = activeDoc?.file != null
 
-  // ── Guard: no processed docs ──────────────────────────────────────────────
-  if (processedFiles.length === 0) {
+  // ── Guard: no active document selected ────────────────────────────────────
+  if (!activeDoc) {
     return (
       <div className="ask-no-docs">
         <div className="ask-no-docs-content">
-          <Upload size={40} strokeWidth={1} color="var(--accent-dim)" />
-          <h2 className="ask-no-docs-title">No documents processed</h2>
+          <FolderOpen size={40} strokeWidth={1} color="var(--accent-dim)" />
+          <h2 className="ask-no-docs-title">No document selected</h2>
           <p className="ask-no-docs-text">
-            Upload and process your documents first, then come back to ask questions.
+            Select a document from Your Documents to start asking questions, or upload a new one.
           </p>
-          <button className="ask-no-docs-btn" onClick={onNavigateToUpload}>
-            Go to Upload
-          </button>
+          <div className="ask-no-docs-actions">
+            <button className="ask-no-docs-btn" onClick={onNavigateToDocs}>
+              Your Documents
+            </button>
+            <button className="ask-no-docs-btn ask-no-docs-btn--secondary" onClick={onNavigateToUpload}>
+              Upload New
+            </button>
+          </div>
         </div>
       </div>
     )
@@ -170,7 +193,21 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
         {/* Doc bar */}
         <div className="ask-doc-bar">
           <FileText size={13} />
-          <span>Querying {processedFiles.length} document{processedFiles.length !== 1 ? 's' : ''}</span>
+          <span className="ask-doc-bar-name" title={activeDoc.doc_name}>
+            {activeDoc.doc_name}
+          </span>
+          {!hasFileBlob && (
+            <span className="ask-doc-bar-notice">No preview</span>
+          )}
+          {messages.length > 0 && (
+            <button
+              className="ask-clear-chat-btn"
+              onClick={handleClearChat}
+              title="Clear chat"
+            >
+              <Trash2 size={12} />
+            </button>
+          )}
         </div>
 
         {/* Messages */}
@@ -178,10 +215,9 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
           {messages.length === 0 && (
             <div className="ask-empty">
               <MessageSquare size={40} strokeWidth={1} color="var(--accent-dim)" />
-              <h2 className="ask-empty-title">Ask your documents</h2>
+              <h2 className="ask-empty-title">Ask about {activeDoc.doc_name}</h2>
               <p className="ask-empty-text">
-                Ask anything about your {processedFiles.length} processed document{processedFiles.length !== 1 ? 's' : ''}.
-                Answers come with exact citations.
+                Ask anything about this document. Answers come with exact citations.
               </p>
             </div>
           )}
@@ -205,7 +241,7 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
             ref={inputRef}
             className="ask-input"
             type="text"
-            placeholder="Ask a question about your documents…"
+            placeholder={`Ask a question about ${activeDoc.doc_name}…`}
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={handleKey}
@@ -232,16 +268,20 @@ export default function AskPage({ files, processedFiles, onNavigateToUpload }) {
         >
           <X size={16} />
         </button>
-        {previewFile ? (
+        {hasFileBlob ? (
           <DocumentPreview
-            file={previewFile.file}
+            file={activeDoc.file}
             externalPage={previewPage}
             highlightText={highlightQuote}
           />
         ) : (
-          <div className="ask-preview-empty">
+          <div className="preview-library-notice">
             <FileText size={32} strokeWidth={1} color="var(--accent-dim)" />
-            <p>Document preview</p>
+            <p className="preview-library-title">{activeDoc.doc_name}</p>
+            <p className="preview-library-text">
+              Preview and citation highlighting are not available for library documents.
+              <br />Re-upload this file on the Upload page to enable these features.
+            </p>
           </div>
         )}
       </div>

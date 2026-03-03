@@ -1,5 +1,5 @@
 import React from 'react'
-import { FileText, FileType, File, Trash2, Plus, Zap, Check, AlertCircle } from 'lucide-react'
+import { FileText, FileType, File, Trash2, Plus, Zap, Check, AlertCircle, Eye } from 'lucide-react'
 
 const EXT_ICON = {
   pdf:  { icon: FileType, color: '#c47a6a' },
@@ -14,7 +14,10 @@ function formatSize(bytes) {
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
 }
 
-export default function FileList({ files, activeIndex, onSelect, onRemove, onAddMore, onProcess, pendingCount }) {
+export default function FileList({ files, activeIndex, onSelect, onRemove, onAddMore, onProcess, pendingCount, isProcessing }) {
+  const totalFiles = files.length
+  const doneCount = files.filter(f => f.status === 'processed' || f.status === 'error').length
+
   return (
     <aside className="file-sidebar">
       <div className="file-sidebar-header">
@@ -24,8 +27,8 @@ export default function FileList({ files, activeIndex, onSelect, onRemove, onAdd
 
       <div className="file-list">
         {files.map((entry, i) => {
-          const name = entry.file.name
-          const size = entry.file.size
+          const name = entry.file?.name || 'Unknown'
+          const size = entry.file?.size
           const ext = name.split('.').pop().toLowerCase()
           const { icon: Icon, color } = EXT_ICON[ext] || { icon: File, color: '#b0a59a' }
 
@@ -36,7 +39,7 @@ export default function FileList({ files, activeIndex, onSelect, onRemove, onAdd
 
           return (
             <div
-              key={i}
+              key={entry.docId || i}
               className={`file-item${i === activeIndex ? ' file-item--active' : ''}${statusClass}`}
               onClick={() => onSelect(i)}
             >
@@ -51,7 +54,7 @@ export default function FileList({ files, activeIndex, onSelect, onRemove, onAdd
                 <p className="file-item-name" title={name}>{name}</p>
                 <p className="file-item-meta">
                   <span className="file-ext-tag" style={{ color }}>{ext.toUpperCase()}</span>
-                  <span>{formatSize(size)}</span>
+                  {size != null && <span>{formatSize(size)}</span>}
                   {entry.status === 'error' && (
                     <span className="file-error-tag" title={entry.error || 'Unknown error'}>
                       <AlertCircle size={10} style={{ marginRight: 2, verticalAlign: 'middle' }} />
@@ -79,10 +82,47 @@ export default function FileList({ files, activeIndex, onSelect, onRemove, onAdd
         })}
       </div>
 
-      {pendingCount > 0 && (
-        <button className="file-process-btn" onClick={onProcess}>
-          <Zap size={14} />
-          <span>Process {pendingCount} document{pendingCount > 1 ? 's' : ''}</span>
+      {/* Progress bar during processing */}
+      {isProcessing && (
+        <div className="process-progress">
+          <div className="process-progress-bar">
+            <div
+              className="process-progress-fill"
+              style={{ width: `${totalFiles > 0 ? (doneCount / totalFiles) * 100 : 0}%` }}
+            />
+          </div>
+          <span className="process-progress-label">
+            {doneCount} / {totalFiles} processed
+          </span>
+        </div>
+      )}
+
+      {/* Process button */}
+      {(pendingCount > 0 || isProcessing) && (
+        <button
+          className={`file-process-btn${isProcessing ? ' file-process-btn--loading' : ''}`}
+          onClick={onProcess}
+          disabled={isProcessing}
+        >
+          {isProcessing ? (
+            <>
+              <span className="process-spinner" />
+              <span>Processing documents…</span>
+            </>
+          ) : (
+            <>
+              <Zap size={14} />
+              <span>Process {pendingCount} document{pendingCount > 1 ? 's' : ''}</span>
+            </>
+          )}
+        </button>
+      )}
+
+      {/* Mobile: explicit preview button when a file is selected */}
+      {files[activeIndex] && !isProcessing && (
+        <button className="file-preview-btn" onClick={() => onSelect(activeIndex)}>
+          <Eye size={14} />
+          <span>Preview: {files[activeIndex].file?.name}</span>
         </button>
       )}
 

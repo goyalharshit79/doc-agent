@@ -46,6 +46,17 @@ export async function login(email, password) {
   return res.json()
 }
 
+// ── Utilities ─────────────────────────────────────────────────────────────────
+
+/** Compute deterministic doc_id matching the backend: sha256(filename:size)[:16] */
+export async function computeDocId(file) {
+  const data = new TextEncoder().encode(`${file.name}:${file.size}`)
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+  const hashArray = Array.from(new Uint8Array(hashBuffer))
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+  return hashHex.slice(0, 16)
+}
+
 // ── Documents ──────────────────────────────────────────────────────────────────
 
 export async function uploadDocument(file, docType = 'general') {
@@ -65,6 +76,14 @@ export async function uploadDocument(file, docType = 'general') {
 
 export async function listDocuments() {
   const res = await fetch(`${BASE}/documents`, { headers: authHeaders() })
+  return handleResponse(res)
+}
+
+export async function deleteDocument(docId) {
+  const res = await fetch(`${BASE}/documents/${docId}`, {
+    method: 'DELETE',
+    headers: authHeaders(),
+  })
   return handleResponse(res)
 }
 

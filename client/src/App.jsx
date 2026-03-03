@@ -1,10 +1,11 @@
 import React, { useState, useRef, useCallback } from 'react'
-import { Menu, X, BookOpen, FileOutput, PanelLeft } from 'lucide-react'
+import { Menu, X, BookOpen, FileOutput, PanelLeft, ChevronLeft, FolderOpen } from 'lucide-react'
 import AuthPage from './components/AuthPage'
 import UploadZone from './components/UploadZone'
 import FileList from './components/FileList'
 import DocumentPreview from './components/DocumentPreview'
 import AskPage from './components/AskPage'
+import YourDocuments from './components/YourDocuments'
 import { uploadDocument } from './api'
 
 // ── Placeholder pages for upcoming features ──────────────────────────────────
@@ -24,7 +25,7 @@ function PlaceholderPage({ page }) {
 }
 
 // ── Nav pages ────────────────────────────────────────────────────────────────
-const PAGES = ['upload', 'ask', 'study', 'extract']
+const PAGES = ['upload', 'documents', 'ask', 'study', 'extract']
 
 export default function App() {
   // ── Auth state ─────────────────────────────────────────────────────────────
@@ -35,11 +36,13 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('docagent_token')
+    sessionStorage.removeItem('docagent_chat_messages')
     setUser(null)
     setFiles([])
     setActiveIndex(0)
     setActivePage('upload')
     setMobileMenuOpen(false)
+    setActiveDoc(null)
   }
 
   // ── Navigation state ───────────────────────────────────────────────────────
@@ -47,61 +50,92 @@ export default function App() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [sidebarOpen, setSidebarOpen]     = useState(true)
 
-  // ── File state ─────────────────────────────────────────────────────────────
-  // status: 'pending' | 'uploading' | 'processed' | 'error'
+  // ── File state (session files only — uploaded in this session) ─────────────
   const [files, setFiles]             = useState([])
   const [activeIndex, setActiveIndex] = useState(0)
-  const [docType, setDocType]         = useState('general')   // doc_type for uploads
+  const [docType, setDocType]         = useState('general')
+  const [isProcessing, setIsProcessing] = useState(false)
   const addInputRef = useRef(null)
+  const filesRef = useRef(files)
+  filesRef.current = files
+
+  // ── Active document for Ask page (single-doc querying) ────────────────────
+  // { doc_id, doc_name, doc_type, num_chunks, file?: File }
+  const [activeDoc, setActiveDoc] = useState(null)
 
   // Derived state
   const pendingCount    = files.filter(f => f.status === 'pending').length
   const processedFiles  = files.filter(f => f.status === 'processed')
   const hasFiles        = files.length > 0
 
+  // ── Mobile detection helper ───────────────────────────────────────────────
+  const isMobile = () => window.innerWidth <= 768
+
   // ── Add files (deferred — no backend call) ─────────────────────────────────
   const handleFilesAdded = useCallback((newFiles) => {
-    const existingNames = new Set(files.map(f => f.file.name))
-    const unique = newFiles.filter(f => !existingNames.has(f.name))
-    if (!unique.length) return
-
-    const entries = unique.map(f => ({ file: f, docId: null, status: 'pending', error: null }))
     setFiles(prev => {
-      const updated = [...prev, ...entries]
-      setActiveIndex(prev.length)
-      return updated
+      const existingNames = new Set(prev.map(f => f.file?.name))
+      const unique = newFiles.filter(f => !existingNames.has(f.name))
+      if (!unique.length) return prev
+
+      const newEntries = unique.map(f => ({
+        file: f, docId: null, status: 'pending', error: null,
+      }))
+      const finalList = [...prev, ...newEntries]
+      setActiveIndex(finalList.length - 1)
+      return finalList
     })
-  }, [files])
+  }, [])
 
   // ── Process pending files (sends to backend) ──────────────────────────────
   const handleProcessDocuments = useCallback(async () => {
-    // Snapshot pending entries from current state (avoids stale closure)
-    const pendingEntries = []
-    setFiles(prev => {
-      const updated = prev.map((e, i) => {
-        if (e.status === 'pending') {
-          pendingEntries.push({ index: i, file: e.file })
-          return { ...e, status: 'uploading' }
-        }
-        return e
-      })
-      return updated
-    })
+    // Snapshot pending entries from ref (avoids side-effects in state updaters)
+    const currentFiles = filesRef.current
+    const pendingEntries = currentFiles
+      .map((e, i) => ({ index: i, file: e.file, status: e.status }))
+      .filter(e => e.status === 'pending' && e.file)
+
+    if (!pendingEntries.length) return
+
+    setIsProcessing(true)
+
+    // Mark all pending as uploading
+    setFiles(prev => prev.map(e =>
+      e.status === 'pending' ? { ...e, status: 'uploading' } : e
+    ))
+
+    let processedCount = 0
+    let lastProcessedDoc = null
 
     for (const { index, file } of pendingEntries) {
-      if (!file) continue
       try {
         const res = await uploadDocument(file, docType)
         setFiles(prev => prev.map((e, i) =>
           i === index ? { ...e, docId: res.doc_id, status: 'processed', error: null } : e
         ))
+        lastProcessedDoc = {
+          doc_id: res.doc_id,
+          doc_name: res.doc_name,
+          doc_type: res.doc_type,
+          num_chunks: res.num_chunks,
+          file: file,
+        }
+        processedCount++
       } catch (err) {
         setFiles(prev => prev.map((e, i) =>
           i === index ? { ...e, status: 'error', error: err.message } : e
         ))
       }
     }
-  }, [])
+
+    setIsProcessing(false)
+
+    // Auto-navigate to Ask page with the last processed doc
+    if (processedCount > 0 && lastProcessedDoc) {
+      setActiveDoc(lastProcessedDoc)
+      setActivePage('ask')
+    }
+  }, [docType])
 
   const handleRemove = useCallback((index) => {
     setFiles(prev => {
@@ -116,6 +150,22 @@ export default function App() {
     const newFiles = Array.from(e.target.files)
     if (newFiles.length) handleFilesAdded(newFiles)
     e.target.value = ''
+  }
+
+  // ── Select doc from YourDocuments page → go to Ask ────────────────────────
+  const handleSelectDoc = (doc) => {
+    // doc comes from the API: { doc_id, doc_name, doc_type, num_chunks, created_at }
+    // Check if we have a session file with matching name (for preview)
+    const sessionFile = files.find(f => f.docId === doc.doc_id && f.file)
+    setActiveDoc({
+      doc_id: doc.doc_id,
+      doc_name: doc.doc_name,
+      doc_type: doc.doc_type,
+      num_chunks: doc.num_chunks,
+      file: sessionFile?.file || null,
+    })
+    sessionStorage.removeItem('docagent_chat_messages')
+    setActivePage('ask')
   }
 
   // ── Auth gate ──────────────────────────────────────────────────────────────
@@ -154,7 +204,7 @@ export default function App() {
               className={`nav-item${activePage === page ? ' nav-item--active' : ''}`}
               onClick={() => { setActivePage(page); setMobileMenuOpen(false) }}
             >
-              {page.charAt(0).toUpperCase() + page.slice(1)}
+              {page === 'documents' ? 'Documents' : page.charAt(0).toUpperCase() + page.slice(1)}
             </span>
           ))}
         </nav>
@@ -163,9 +213,11 @@ export default function App() {
           <div className="status-pill">
             <span className="status-dot" />
             <span className="status-text">
-              {hasFiles
-                ? `${processedFiles.length}/${files.length} processed`
-                : 'No documents'}
+              {activeDoc
+                ? `Querying: ${activeDoc.doc_name}`
+                : hasFiles
+                  ? `${processedFiles.length}/${files.length} processed`
+                  : 'No documents'}
             </span>
           </div>
           <button className="auth-logout-btn" onClick={handleLogout} title="Sign out">
@@ -203,32 +255,49 @@ export default function App() {
                   onAddMore={handleAddMore}
                   onProcess={handleProcessDocuments}
                   pendingCount={pendingCount}
+                  isProcessing={isProcessing}
                 />
                 <div className="preview-area">
+                  {/* Desktop: panel toggle */}
                   <button
-                    className="sidebar-toggle-btn"
+                    className="sidebar-toggle-btn desktop-only"
                     onClick={() => setSidebarOpen(prev => !prev)}
                     aria-label="Toggle file list"
                   >
                     <PanelLeft size={16} />
                     <span>{sidebarOpen ? 'Hide files' : 'Show files'}</span>
                   </button>
-                  <DocumentPreview file={files[activeIndex]?.file} />
+                  {/* Mobile: always-visible back button when sidebar is hidden */}
+                  <button
+                    className="mobile-back-btn"
+                    onClick={() => setSidebarOpen(true)}
+                    aria-label="Back to file list"
+                  >
+                    <ChevronLeft size={16} />
+                    <span>Files</span>
+                  </button>
+                  {files[activeIndex]?.file ? (
+                    <DocumentPreview file={files[activeIndex].file} />
+                  ) : null}
                 </div>
               </div>
             )}
           </>
         )}
 
+        {activePage === 'documents' && (
+          <YourDocuments onSelectDoc={handleSelectDoc} user={user} />
+        )}
+
         {activePage === 'ask' && (
           <AskPage
-            files={files}
-            processedFiles={processedFiles}
+            activeDoc={activeDoc}
             onNavigateToUpload={() => setActivePage('upload')}
+            onNavigateToDocs={() => setActivePage('documents')}
           />
         )}
 
-        {activePage !== 'upload' && activePage !== 'ask' && (
+        {activePage !== 'upload' && activePage !== 'ask' && activePage !== 'documents' && (
           <PlaceholderPage page={activePage} />
         )}
       </main>

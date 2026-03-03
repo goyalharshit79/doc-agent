@@ -10,6 +10,8 @@ from app.services.vector_store import (
     get_user_documents,
     process_upload,
     get_qdrant_client,
+    delete_document_full,
+    doc_exists_for_user,
 )
 from app.services.llm import run_rag
 
@@ -95,6 +97,27 @@ async def list_documents(user_id: str = Depends(get_current_user_id)):
     """Return all documents the current user has uploaded."""
     docs = await asyncio.to_thread(get_user_documents, user_id)
     return docs
+
+
+# ── DELETE /documents/{doc_id} ────────────────────────────────────────────────
+
+@router.delete("/documents/{doc_id}")
+async def delete_document(
+    doc_id: str,
+    user_id: str = Depends(get_current_user_id),
+):
+    """Delete a document's embeddings and metadata completely."""
+    # Verify ownership
+    exists = await asyncio.to_thread(doc_exists_for_user, doc_id, user_id)
+    if not exists:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    try:
+        await asyncio.to_thread(delete_document_full, doc_id, user_id)
+        return {"message": "Document deleted", "doc_id": doc_id}
+    except Exception as e:
+        logger.exception(f"Delete failed for doc_id={doc_id}")
+        raise HTTPException(status_code=500, detail=f"Delete failed: {str(e)}")
 
 
 # ── POST /ask ─────────────────────────────────────────────────────────────────

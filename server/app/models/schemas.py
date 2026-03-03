@@ -56,3 +56,4 @@ class DocMeta(BaseModel):
     doc_name: str
     doc_type: str
     num_chunks: int
+    created_at: Optional[str] = None

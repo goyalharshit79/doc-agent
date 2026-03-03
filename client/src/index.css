@@ -653,6 +653,180 @@ body {
   box-shadow: var(--shadow-sm);
 }
 
+/* "Preview" button — mobile only */
+.file-preview-btn {
+  display: none;
+  margin: 8px;
+  padding: 10px 14px;
+  background: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  color: var(--bg-base);
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  cursor: pointer;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  letter-spacing: 0.04em;
+  transition: var(--transition);
+  box-shadow: var(--shadow-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-preview-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.file-preview-btn:active {
+  opacity: 0.85;
+}
+
+@media (max-width: 768px) {
+  .file-preview-btn {
+    display: flex;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LIBRARY TAG IN FILE LIST
+───────────────────────────────────────────────────────────── */
+.file-library-tag {
+  font-family: var(--font-ui);
+  font-size: 0.55rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #6a8fb5;
+  background: rgba(106, 143, 181, 0.1);
+  border: 1px solid rgba(106, 143, 181, 0.25);
+  padding: 1px 6px;
+  border-radius: 99px;
+  font-weight: 500;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   PROCESSING PROGRESS BAR
+───────────────────────────────────────────────────────────── */
+.process-progress {
+  margin: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.process-progress-bar {
+  height: 4px;
+  background: var(--bg-elevated);
+  border-radius: 2px;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+
+.process-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.process-progress-label {
+  font-family: var(--font-ui);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-align: center;
+}
+
+/* Process button loading state */
+.file-process-btn--loading {
+  opacity: 0.8;
+  cursor: not-allowed;
+}
+
+.process-spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(245, 242, 238, 0.3);
+  border-top: 2px solid var(--bg-base);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  flex-shrink: 0;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   LIBRARY PREVIEW NOTICE
+───────────────────────────────────────────────────────────── */
+.preview-library-notice {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  padding: 48px 24px;
+  animation: fadeIn 0.3s ease;
+}
+
+.preview-library-title {
+  font-family: var(--font-body);
+  font-size: 0.95rem;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.preview-library-text {
+  font-family: var(--font-body);
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  max-width: 360px;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   EMPTY LOADING TEXT
+───────────────────────────────────────────────────────────── */
+.empty-loading-text {
+  margin-top: 12px;
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  letter-spacing: 0.04em;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   ASK PAGE — CLEAR CHAT BUTTON
+───────────────────────────────────────────────────────────── */
+.ask-clear-chat-btn {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  padding: 4px 8px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+  flex-shrink: 0;
+}
+
+.ask-clear-chat-btn:hover {
+  color: #c47a6a;
+  border-color: rgba(196, 122, 106, 0.3);
+  background: rgba(196, 122, 106, 0.06);
+}
+
+/* ASK PAGE — Doc bar notice for library-only docs */
+.ask-doc-bar-notice {
+  color: var(--text-muted);
+  font-size: 0.62rem;
+}
+
 /* ─────────────────────────────────────────────────────────────
    DOCUMENT PREVIEW
 ───────────────────────────────────────────────────────────── */
@@ -1254,7 +1428,7 @@ body {
 }
 
 /* ─────────────────────────────────────────────────────────────
-   SIDEBAR TOGGLE (mobile only)
+   SIDEBAR TOGGLE (desktop panel toggle)
 ───────────────────────────────────────────────────────────── */
 .sidebar-toggle-btn {
   display: none;
@@ -1277,6 +1451,31 @@ body {
 .sidebar-toggle-btn:hover {
   background: var(--bg-hover);
   color: var(--text-primary);
+}
+
+/* ─────────────────────────────────────────────────────────────
+   MOBILE BACK BUTTON (hidden on desktop, visible on mobile)
+───────────────────────────────────────────────────────────── */
+.mobile-back-btn {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 16px;
+  margin: 0;
+  background: var(--bg-surface);
+  border: none;
+  border-bottom: 1px solid var(--border-subtle);
+  font-family: var(--font-ui);
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+  width: 100%;
+}
+
+.mobile-back-btn:active {
+  background: var(--bg-hover);
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -1309,7 +1508,11 @@ body {
     pointer-events: auto;
   }
 
-  .sidebar-toggle-btn {
+  .sidebar-toggle-btn.desktop-only {
+    display: none !important;
+  }
+
+  .mobile-back-btn {
     display: none !important;
   }
 }
@@ -1388,7 +1591,11 @@ body {
   }
 
   /* ── Workspace / Sidebar ────────────────────────────────── */
-  .sidebar-toggle-btn {
+  .sidebar-toggle-btn.desktop-only {
+    display: none;
+  }
+
+  .mobile-back-btn {
     display: flex;
   }
 
@@ -2041,4 +2248,350 @@ body {
   color: var(--text-muted);
   font-family: var(--font-body);
   font-size: 0.84rem;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   YOUR DOCUMENTS PAGE
+───────────────────────────────────────────────────────────── */
+.your-docs-page {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 32px 40px;
+  overflow-y: auto;
+  max-width: 900px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.your-docs-header {
+  margin-bottom: 28px;
+}
+
+.your-docs-title {
+  font-family: var(--font-display);
+  font-size: 1.8rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 4px;
+}
+
+.your-docs-subtitle {
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+}
+
+.your-docs-loading {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+}
+
+.your-docs-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  text-align: center;
+  color: var(--text-muted);
+  font-family: var(--font-body);
+}
+
+.your-docs-empty h2 {
+  font-family: var(--font-display);
+  font-size: 1.4rem;
+  color: var(--text-secondary);
+}
+
+.your-docs-empty p {
+  font-size: 0.88rem;
+  max-width: 360px;
+  line-height: 1.5;
+}
+
+.your-docs-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 16px;
+  background: rgba(196, 122, 106, 0.08);
+  border: 1px solid rgba(196, 122, 106, 0.2);
+  border-radius: var(--radius-md);
+  color: #c47a6a;
+  font-size: 0.82rem;
+  font-family: var(--font-ui);
+}
+
+.your-docs-error button {
+  margin-left: auto;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  font-family: inherit;
+  font-size: inherit;
+}
+
+/* ── Document grid ──────────────────────────────────────────── */
+.your-docs-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.your-docs-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.your-docs-card:hover {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.your-docs-card-icon {
+  width: 44px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-md);
+  flex-shrink: 0;
+}
+
+.your-docs-card-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.your-docs-card-name {
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 2px;
+}
+
+.your-docs-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-ui);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.your-docs-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.your-docs-ask-btn,
+.your-docs-delete-btn {
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: var(--transition);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.your-docs-ask-btn:hover {
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+
+.your-docs-delete-btn:hover {
+  background: rgba(196, 122, 106, 0.12);
+  color: #c47a6a;
+}
+
+/* ── Delete confirmation dialog ─────────────────────────────── */
+.delete-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(44, 38, 32, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  animation: fadeIn 0.15s ease-out;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.delete-dialog {
+  background: var(--bg-base);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px 32px;
+  max-width: 400px;
+  width: 100%;
+  box-shadow: var(--shadow-md);
+  text-align: center;
+  animation: fadeUp 0.2s ease-out;
+}
+
+.delete-dialog-icon {
+  margin-bottom: 16px;
+}
+
+.delete-dialog-title {
+  font-family: var(--font-display);
+  font-size: 1.3rem;
+  font-weight: 500;
+  color: var(--text-primary);
+  margin-bottom: 8px;
+}
+
+.delete-dialog-text {
+  font-family: var(--font-body);
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 24px;
+}
+
+.delete-dialog-text strong {
+  color: var(--text-primary);
+}
+
+.delete-dialog-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: center;
+}
+
+.delete-dialog-cancel,
+.delete-dialog-confirm {
+  padding: 8px 20px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-ui);
+  font-size: 0.82rem;
+  cursor: pointer;
+  transition: var(--transition);
+  border: 1px solid var(--border);
+}
+
+.delete-dialog-cancel {
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.delete-dialog-cancel:hover {
+  background: var(--bg-elevated);
+}
+
+.delete-dialog-confirm {
+  background: #c47a6a;
+  color: #fff;
+  border-color: #c47a6a;
+}
+
+.delete-dialog-confirm:hover {
+  background: #b06858;
+}
+
+.delete-dialog-confirm:disabled,
+.delete-dialog-cancel:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ── Ask page: no-docs actions row ──────────────────────────── */
+.ask-no-docs-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+
+.ask-no-docs-btn--secondary {
+  background: var(--bg-surface) !important;
+  color: var(--text-secondary) !important;
+  border: 1px solid var(--border) !important;
+}
+
+.ask-no-docs-btn--secondary:hover {
+  background: var(--bg-elevated) !important;
+}
+
+/* ── Ask doc bar: single doc name ───────────────────────────── */
+.ask-doc-bar-name {
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
+}
+
+/* ── Mobile responsive ──────────────────────────────────────── */
+@media (max-width: 768px) {
+  .your-docs-page {
+    padding: 20px 16px;
+  }
+
+  .your-docs-title {
+    font-size: 1.4rem;
+  }
+
+  .your-docs-card {
+    padding: 12px 14px;
+  }
+
+  .your-docs-card-icon {
+    width: 38px;
+    height: 38px;
+  }
+
+  .your-docs-card-actions {
+    gap: 2px;
+  }
+
+  .your-docs-ask-btn,
+  .your-docs-delete-btn {
+    width: 28px;
+    height: 28px;
+  }
+
+  .delete-dialog {
+    padding: 24px 20px;
+  }
+
+  .ask-doc-bar-name {
+    max-width: 160px;
+  }
 }

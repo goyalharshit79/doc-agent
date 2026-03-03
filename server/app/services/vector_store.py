@@ -225,16 +225,18 @@ def hybrid_search(
     dense_qv  = emb_svc.encode_query_dense(query)
     sparse_qv = emb_svc.encode_query_sparse(query)
 
-    # Strict metadata filter
+    # Strict metadata filter — use exact match for single doc, MatchAny for multi
+    doc_filter = (
+        models.FieldCondition(key="doc_id", match=models.MatchValue(value=doc_ids[0]))
+        if len(doc_ids) == 1
+        else models.FieldCondition(key="doc_id", match=models.MatchAny(any=doc_ids))
+    )
     must_filter = models.Filter(must=[
         models.FieldCondition(
             key="user_id",
             match=models.MatchValue(value=user_id),
         ),
-        models.FieldCondition(
-            key="doc_id",
-            match=models.MatchAny(any=doc_ids),
-        ),
+        doc_filter,
     ])
 
     sparse_vector = models.SparseVector(
@@ -285,15 +287,17 @@ def keyword_search(
 
     sparse_qv = emb_svc.encode_query_sparse(query)
 
+    doc_filter = (
+        models.FieldCondition(key="doc_id", match=models.MatchValue(value=doc_ids[0]))
+        if len(doc_ids) == 1
+        else models.FieldCondition(key="doc_id", match=models.MatchAny(any=doc_ids))
+    )
     must_filter = models.Filter(must=[
         models.FieldCondition(
             key="user_id",
             match=models.MatchValue(value=user_id),
         ),
-        models.FieldCondition(
-            key="doc_id",
-            match=models.MatchAny(any=doc_ids),
-        ),
+        doc_filter,
     ])
 
     results = client.query_points(
@@ -333,6 +337,24 @@ def delete_document_vectors(doc_id: str, user_id: str):
         ),
     )
     logger.info(f"Deleted vectors for doc_id={doc_id}")
+
+
+def delete_doc_meta(doc_id: str, user_id: str):
+    """Delete document metadata from Supabase."""
+    try:
+        sb = _get_supabase()
+        sb.table("documents").delete().eq("doc_id", doc_id).eq("user_id", user_id).execute()
+        logger.info(f"Deleted Supabase metadata for doc_id={doc_id}")
+    except Exception as e:
+        logger.warning(f"Supabase doc meta delete failed: {e}")
+        raise
+
+
+def delete_document_full(doc_id: str, user_id: str):
+    """Delete document from both Qdrant (embeddings) and Supabase (metadata)."""
+    delete_document_vectors(doc_id, user_id)
+    delete_doc_meta(doc_id, user_id)
+    logger.info(f"Fully deleted doc_id={doc_id} for user={user_id[:8]}…")
 
 
 # ── Upload orchestrator ───────────────────────────────────────────────────────
