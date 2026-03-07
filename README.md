@@ -53,27 +53,29 @@ RE-UPLOAD: doc_id match in Supabase → return cached metadata instantly (skip e
 ## Tech Stack
 
 ### Backend
-| Component        | Technology                                |
-|------------------|-------------------------------------------|
-| Web framework    | FastAPI + Uvicorn                         |
-| Vector search    | Google Vertex AI Vector Search            |
-| Auth & metadata  | Supabase (PostgreSQL + GoTrue)            |
-| Document parsing | unstructured[pdf,docx]                    |
-| Dense embeddings | BAAI/bge-small-en-v1.5 (fastembed)        |
-| Sparse embeddings| Qdrant/bm25 (fastembed)                   |
-| Reranking        | cross-encoder/ms-marco-MiniLM-L-6-v2     |
-| LLM (answers)    | Google Gemini 2.5 Pro                     |
-| LLM (rewrite)    | Google Gemini 2.5 Flash                   |
-| Retry/backoff    | tenacity (exponential backoff on GCP)     |
+
+| Component         | Technology                            |
+| ----------------- | ------------------------------------- |
+| Web framework     | FastAPI + Uvicorn                     |
+| Vector search     | Google Vertex AI Vector Search        |
+| Auth & metadata   | Supabase (PostgreSQL + GoTrue)        |
+| Document parsing  | unstructured[pdf,docx]                |
+| Dense embeddings  | BAAI/bge-small-en-v1.5 (fastembed)    |
+| Sparse embeddings | Qdrant/bm25 (fastembed)               |
+| Reranking         | cross-encoder/ms-marco-MiniLM-L-6-v2  |
+| LLM (answers)     | Google Gemini 2.5 Pro                 |
+| LLM (rewrite)     | Google Gemini 2.5 Flash               |
+| Retry/backoff     | tenacity (exponential backoff on GCP) |
 
 ### Frontend
-| Component      | Technology                               |
-|----------------|------------------------------------------|
-| Framework      | React 18 + Vite                          |
-| Markdown       | react-markdown + remark-gfm             |
-| PDF preview    | pdfjs-dist                               |
-| DOCX preview   | mammoth                                  |
-| Icons          | lucide-react                             |
+
+| Component    | Technology                  |
+| ------------ | --------------------------- |
+| Framework    | React 18 + Vite             |
+| Markdown     | react-markdown + remark-gfm |
+| PDF preview  | pdfjs-dist                  |
+| DOCX preview | mammoth                     |
+| Icons        | lucide-react                |
 
 ---
 
@@ -178,17 +180,17 @@ CORS_ORIGINS=http://localhost:5173
 
 ### Optional
 
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `THREAD_POOL_SIZE` | 16 | Concurrent GCP call workers |
-| `PORT` | 8000 | Server port (Cloud Run sets this) |
-| `DENSE_MODEL` | BAAI/bge-small-en-v1.5 | 384-dim dense embedding model |
-| `SPARSE_MODEL` | Qdrant/bm25 | BM25 sparse embedding model |
-| `RERANKER_MODEL` | cross-encoder/ms-marco-MiniLM-L-6-v2 | Cross-encoder model |
-| `LLM_MODEL` | gemini-2.5-pro | Answer generation model |
-| `QUERY_REWRITE_MODEL` | gemini-2.5-flash | Query rewrite model |
-| `RETRIEVAL_TOP_K` | 15 | Hybrid search candidates |
-| `RERANK_TOP_K` | 5 | Final chunks sent to LLM |
+| Variable              | Default                              | Purpose                           |
+| --------------------- | ------------------------------------ | --------------------------------- |
+| `THREAD_POOL_SIZE`    | 16                                   | Concurrent GCP call workers       |
+| `PORT`                | 8000                                 | Server port (Cloud Run sets this) |
+| `DENSE_MODEL`         | BAAI/bge-small-en-v1.5               | 384-dim dense embedding model     |
+| `SPARSE_MODEL`        | Qdrant/bm25                          | BM25 sparse embedding model       |
+| `RERANKER_MODEL`      | cross-encoder/ms-marco-MiniLM-L-6-v2 | Cross-encoder model               |
+| `LLM_MODEL`           | gemini-2.5-pro                       | Answer generation model           |
+| `QUERY_REWRITE_MODEL` | gemini-2.5-flash                     | Query rewrite model               |
+| `RETRIEVAL_TOP_K`     | 15                                   | Hybrid search candidates          |
+| `RERANK_TOP_K`        | 5                                    | Final chunks sent to LLM          |
 
 ### Client Build
 
@@ -207,7 +209,7 @@ Falls back to `http://localhost:8000/api` in development.
 ### Supabase: `documents` Table
 
 | Column       | Type        | Notes                          |
-|--------------|-------------|--------------------------------|
+| ------------ | ----------- | ------------------------------ |
 | `doc_id`     | text (PK)   | SHA256(filename:filesize)[:16] |
 | `doc_name`   | text        | Original filename              |
 | `doc_type`   | text        | contract, resume, general, etc |
@@ -218,6 +220,7 @@ Falls back to `http://localhost:8000/api` in development.
 ### Vertex AI Vector Search
 
 Each chunk is stored as a datapoint with:
+
 - **Dense vector**: 384 dimensions (BAAI/bge-small-en-v1.5)
 - **Sparse vector**: BM25+IDF token weights
 - **Restricts/metadata**: `user_id`, `doc_id`, `doc_type`, `chunk_id`, `text`, `page_number`, `heading`
@@ -268,13 +271,13 @@ Response → Frontend renders answer with clickable citation chips
 
 Documents are chunked differently based on type:
 
-| Type            | Chunk Size (words) | Overlap | Notes                            |
-|-----------------|-------------------|---------|----------------------------------|
-| `contract`      | 600               | 100     | Numbered clauses → heading breaks |
-| `medical_report`| 500               | 80      | Standard                         |
-| `book`          | 800               | 150     | Larger for narrative flow        |
-| `resume`        | 200               | 30      | Small sections kept whole        |
-| `general`       | 500               | 80      | Default                          |
+| Type             | Chunk Size (words) | Overlap | Notes                             |
+| ---------------- | ------------------ | ------- | --------------------------------- |
+| `contract`       | 600                | 100     | Numbered clauses → heading breaks |
+| `medical_report` | 500                | 80      | Standard                          |
+| `book`           | 800                | 150     | Larger for narrative flow         |
+| `resume`         | 200                | 30      | Small sections kept whole         |
+| `general`        | 500                | 80      | Default                           |
 
 ---
 
@@ -323,6 +326,7 @@ VITE_API_URL=https://docagent-api-xxx-uc.a.run.app/api npm run build
 ## Citation Highlighting
 
 When a citation chip is clicked in the chat:
+
 1. Preview jumps to the citation's page
 2. Citation quote text is matched against the preview using:
    - **Markdown stripping** — removes formatting added by the parser
@@ -338,3 +342,11 @@ When a citation chip is clicked in the chat:
 - **Embeddings are batched** (64 texts/batch) to prevent OOM on large documents.
 - **Chunk IDs are stripped** from LLM answers via regex safety net, in case the model leaks them.
 - **PDF.js worker** loads from CDN — preview requires internet on first load.
+
+---
+
+## License & Copyright
+
+© 2026 Harshit Goyal. All rights reserved.
+
+This software and its source code are proprietary. Unauthorized copying, modification, distribution, or any use of this code, via any medium, is strictly prohibited. This repository is for **viewing and educational purposes only**.
