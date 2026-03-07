@@ -1,17 +1,18 @@
 import asyncio
 import logging
+import time
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.core.auth import get_current_user_id
 from app.models.schemas import AskRequest, AskResponse, DocMeta, DocType, UploadResponse
-from app.services.parser import parse_document
+from app.services.parser import make_doc_id, parse_document
 from app.services.vector_store import (
     get_user_documents,
     process_upload,
-    get_qdrant_client,
     delete_document_full,
     doc_exists_for_user,
+    get_doc_meta_by_id,
 )
 from app.services.llm import run_rag
 
@@ -49,8 +50,24 @@ async def upload_document(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Empty file")
 
+    # ── Fast path: check if this exact doc already exists (skip parsing) ──
+    doc_id = make_doc_id(file.filename, len(file_bytes))
+    cached = await asyncio.to_thread(get_doc_meta_by_id, doc_id, user_id)
+    if cached:
+        logger.info(f"Fast cache hit for doc_id={doc_id} — skipping parse & embed")
+        return UploadResponse(
+            doc_id     = cached["doc_id"],
+            doc_name   = cached["doc_name"],
+            doc_type   = cached["doc_type"],
+            num_chunks = cached["num_chunks"],
+            message    = "Loaded from cache",
+        )
+
     try:
+        t_upload_start = time.perf_counter()
+
         # Parse (unstructured → Markdown → adaptive chunking)
+        t0 = time.perf_counter()
         doc_id, chunks = await asyncio.to_thread(
             parse_document,
             file_bytes,
@@ -59,10 +76,13 @@ async def upload_document(
             doc_type_enum.value,     # pass validated doc_type
             user_id,                  # pass user_id for metadata
         )
+        logger.info(f"⏱  PARSE       {time.perf_counter() - t0:.2f}s  ({file.filename} → {len(chunks)} chunks)")
+
         if not chunks:
             raise HTTPException(status_code=422, detail="No text could be extracted")
 
-        # Embed (dense + sparse) → store in Qdrant + Supabase
+        # Embed (dense + sparse) → store in Vertex AI + Supabase
+        t0 = time.perf_counter()
         result = await asyncio.to_thread(
             process_upload,
             chunks,
@@ -71,6 +91,10 @@ async def upload_document(
             user_id,
             doc_type_enum.value,
         )
+        logger.info(f"⏱  EMBED+STORE {time.perf_counter() - t0:.2f}s  ({result['num_chunks']} chunks)")
+
+        t_total = time.perf_counter() - t_upload_start
+        logger.info(f"⏱  UPLOAD TOTAL {t_total:.2f}s  ({file.filename})")
 
         return UploadResponse(
             doc_id     = result["doc_id"],
@@ -140,51 +164,14 @@ async def ask_question(
         raise HTTPException(status_code=403, detail="Access denied to one or more documents")
 
     try:
+        t0 = time.perf_counter()
         # run_rag now takes user_id for metadata-filtered hybrid search
         response = await asyncio.to_thread(run_rag, request, user_id)
+        logger.info(f"⏱  ASK TOTAL   {time.perf_counter() - t0:.2f}s  (question: {request.question[:60]})")
         return response
     except Exception as e:
         logger.exception("RAG pipeline failed")
         raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
 
 
-# ── GET /debug/qdrant — inspect vector store ─────────────────────────────────
 
-@router.get("/debug/qdrant")
-async def debug_qdrant():
-    """Shows unified collection info: vector counts, sample data (dev only)."""
-    from app.core.config import get_settings
-
-    client   = get_qdrant_client()
-    settings = get_settings()
-    name     = settings.collection_name
-
-    if not client.collection_exists(name):
-        return {"collection": name, "exists": False, "count": 0}
-
-    info  = client.get_collection(name)
-    count = info.points_count or 0
-
-    samples = []
-    if count > 0:
-        scroll = client.scroll(collection_name=name, limit=5, with_payload=True)
-        for point in scroll[0]:
-            p = point.payload or {}
-            samples.append({
-                "id":        str(point.id),
-                "chunk_id":  p.get("chunk_id", ""),
-                "doc_id":    p.get("doc_id", ""),
-                "doc_type":  p.get("doc_type", ""),
-                "user_id":   p.get("user_id", "")[:8] + "…",
-                "page":      p.get("page_number"),
-                "heading":   p.get("heading", ""),
-                "text":      (p.get("text", "")[:120] + "…") if len(p.get("text", "")) > 120 else p.get("text", ""),
-            })
-
-    return {
-        "collection": name,
-        "exists":     True,
-        "count":      count,
-        "vectors":    {"dense": "384-dim COSINE", "sparse": "BM25 + IDF"},
-        "samples":    samples,
-    }

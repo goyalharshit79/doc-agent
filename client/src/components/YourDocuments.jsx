@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react'
-import { FileText, FileType, File, Trash2, MessageSquare, AlertCircle, Loader } from 'lucide-react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { FileText, FileType, File, Trash2, MessageSquare, AlertCircle, RefreshCw } from 'lucide-react'
 import { listDocuments, deleteDocument } from '../api'
 
 const EXT_ICON = {
@@ -22,26 +22,36 @@ export default function YourDocuments({ onSelectDoc, user }) {
   const [deleteTarget, setDeleteTarget] = useState(null)  // doc to confirm delete
   const [deleting, setDeleting]   = useState(false)
 
-  // Load documents on mount
+  // Load documents (extracted so it can be called from Retry button too)
+  const loadDocs = useCallback(async (signal) => {
+    setLoading(true)
+    setError(null)
+    try {
+      // Race against a 15-second timeout so the page never hangs forever
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('timeout')), 15000)
+      )
+      const result = await Promise.race([listDocuments(), timeout])
+      if (!signal?.aborted) setDocs(result)
+    } catch (err) {
+      if (!signal?.aborted) {
+        setError(
+          err.message === 'timeout'
+            ? 'Loading took too long. Please try again.'
+            : 'Could not load your documents. Please try again.'
+        )
+      }
+    } finally {
+      if (!signal?.aborted) setLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     if (!user) return
-    let cancelled = false
-
-    async function load() {
-      try {
-        setLoading(true)
-        const result = await listDocuments()
-        if (!cancelled) setDocs(result)
-      } catch (err) {
-        if (!cancelled) setError(err.message)
-      } finally {
-        if (!cancelled) setLoading(false)
-      }
-    }
-
-    load()
-    return () => { cancelled = true }
-  }, [user])
+    const controller = new AbortController()
+    loadDocs(controller.signal)
+    return () => controller.abort()
+  }, [user, loadDocs])
 
   // ── Delete with confirmation ──────────────────────────────────────────────
   const handleDeleteClick = (e, doc) => {
@@ -57,7 +67,7 @@ export default function YourDocuments({ onSelectDoc, user }) {
       setDocs(prev => prev.filter(d => d.doc_id !== deleteTarget.doc_id))
       setDeleteTarget(null)
     } catch (err) {
-      setError(`Delete failed: ${err.message}`)
+      setError('Could not delete the document. Please try again.')
       setDeleteTarget(null)
     } finally {
       setDeleting(false)
@@ -80,6 +90,32 @@ export default function YourDocuments({ onSelectDoc, user }) {
         <div className="your-docs-loading">
           <div className="preview-spinner" />
           <p>Loading your documents…</p>
+        </div>
+      </div>
+    )
+  }
+
+  // ── Error state (must come BEFORE empty state) ─────────────────────────
+  if (error && docs.length === 0) {
+    return (
+      <div className="your-docs-page">
+        <div className="your-docs-empty">
+          <AlertCircle size={48} strokeWidth={1} color="#c47a6a" />
+          <h2>Something went wrong</h2>
+          <p>{error}</p>
+          <button
+            className="your-docs-retry-btn"
+            onClick={() => loadDocs()}
+            style={{
+              marginTop: '1rem', padding: '0.5rem 1.25rem',
+              background: 'var(--accent)', color: '#fff',
+              border: 'none', borderRadius: '6px', cursor: 'pointer',
+              display: 'inline-flex', alignItems: 'center', gap: '0.4rem',
+              fontSize: '0.85rem',
+            }}
+          >
+            <RefreshCw size={14} /> Try again
+          </button>
         </div>
       </div>
     )

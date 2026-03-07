@@ -10,10 +10,18 @@ qdrant_storage/
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 
-# Environment
+# Environment (secrets)
 .env
+!.env.example
 
 # IDE
 .vscode/
 .idea/
+
+# FastEmbed / ONNX model cache
+.cache/
+
+# Stray pip artifacts
+=*

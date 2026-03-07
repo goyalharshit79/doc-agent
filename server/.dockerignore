@@ -1,0 +1,27 @@
+# Virtual environments
+venv/
+.venv/
+
+# Environment files (secrets injected via Cloud Run env vars)
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Qdrant local storage
+qdrant/
+qdrant_storage/
+
+# Stray files
+=8.2.0
+
+# Tests
+tests/
+*.test.py

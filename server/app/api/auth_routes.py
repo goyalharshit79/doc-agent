@@ -19,8 +19,12 @@ class AuthRequest(BaseModel):
 
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: str | None = None
     user_id: str
     email: str
+
+class RefreshRequest(BaseModel):
+    refresh_token: str
 
 
 def get_supabase():
@@ -49,6 +53,7 @@ def signup(body: AuthRequest):
 
         return AuthResponse(
             access_token=res.session.access_token,
+            refresh_token=res.session.refresh_token,
             user_id=res.user.id,
             email=res.user.email,
         )
@@ -67,6 +72,25 @@ def login(body: AuthRequest):
 
         return AuthResponse(
             access_token=res.session.access_token,
+            refresh_token=res.session.refresh_token,
+            user_id=res.user.id,
+            email=res.user.email,
+        )
+    except Exception as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+@router.post("/refresh", response_model=AuthResponse)
+def refresh(body: RefreshRequest):
+    try:
+        sb = get_supabase()
+        res = sb.auth.refresh_session(body.refresh_token)
+
+        if not res.session:
+            raise HTTPException(status_code=401, detail="Invalid or expired refresh token")
+
+        return AuthResponse(
+            access_token=res.session.access_token,
+            refresh_token=res.session.refresh_token,
             user_id=res.user.id,
             email=res.user.email,
         )

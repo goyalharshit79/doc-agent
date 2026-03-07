@@ -25,14 +25,21 @@ export default function AuthPage({ onAuth }) {
           setMode('login')
         } else {
           localStorage.setItem('docagent_token', res.access_token)
+          if (res.refresh_token) {
+            localStorage.setItem('docagent_refresh_token', res.refresh_token)
+          }
           onAuth({ token: res.access_token, userId: res.user_id, email: res.email })
         }
       } else {
         const res = await login(email, password)
         localStorage.setItem('docagent_token', res.access_token)
+        if (res.refresh_token) {
+          localStorage.setItem('docagent_refresh_token', res.refresh_token)
+        }
         onAuth({ token: res.access_token, userId: res.user_id, email: res.email })
       }
     } catch (e) {
+      // Error is already user-friendly (mapped in api.js), show it directly
       setError(e.message)
     } finally {
       setLoading(false)

@@ -42,9 +42,19 @@ class EmbeddingService:
 
     # ── Dense embeddings ──────────────────────────────────────────────────────
 
-    def encode_dense(self, texts: list[str]) -> list[list[float]]:
+    def encode_dense(self, texts: list[str], batch_size: int = 64) -> list[list[float]]:
         """Batch encode texts → list of 384-dim float vectors."""
-        return [emb.tolist() for emb in self._dense.embed(texts)]
+        all_vecs: list[list[float]] = []
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            all_vecs.extend(emb.tolist() for emb in self._dense.embed(batch))
+            if len(texts) > batch_size:
+                logger.info(
+                    f"  Dense batch {start // batch_size + 1}"
+                    f"/{(len(texts) + batch_size - 1) // batch_size}"
+                    f" ({len(batch)} texts)"
+                )
+        return all_vecs
 
     def encode_query_dense(self, query: str) -> list[float]:
         """Encode a single search query (may apply model-specific prefix)."""
@@ -52,9 +62,13 @@ class EmbeddingService:
 
     # ── Sparse embeddings (BM25) ──────────────────────────────────────────────
 
-    def encode_sparse(self, texts: list[str]) -> list[Any]:
+    def encode_sparse(self, texts: list[str], batch_size: int = 64) -> list[Any]:
         """Batch encode texts → list of SparseEmbedding (indices + values)."""
-        return list(self._sparse.embed(texts))
+        all_vecs: list[Any] = []
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            all_vecs.extend(self._sparse.embed(batch))
+        return all_vecs
 
     def encode_query_sparse(self, query: str) -> Any:
         """Encode a single query → SparseEmbedding."""
@@ -62,8 +76,12 @@ class EmbeddingService:
 
     # ── Convenience: both at once ─────────────────────────────────────────────
 
+    # Max texts per ONNX call — keeps memory under control for large docs.
+    EMBED_BATCH_SIZE = 64
+
     def encode_dual(self, texts: list[str]) -> tuple[list[list[float]], list[Any]]:
-        """Generate dense + sparse vectors for the same texts."""
-        dense = self.encode_dense(texts)
-        sparse = self.encode_sparse(texts)
+        """Generate dense + sparse vectors for the same texts (batched)."""
+        bs = self.EMBED_BATCH_SIZE
+        dense = self.encode_dense(texts, batch_size=bs)
+        sparse = self.encode_sparse(texts, batch_size=bs)
         return dense, sparse

@@ -30,11 +30,69 @@ def make_doc_id(filename: str, size: int) -> str:
 
 # ── Stage 1: Parse to Markdown elements ───────────────────────────────────────
 
+_TEXT_EXTENSIONS = {".md", ".txt"}
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+)")  # Markdown headings
+
+
+def _parse_text_native(file_bytes: bytes, filename: str) -> list[dict]:
+    """
+    Lightweight parser for plain-text files (.md, .txt).
+    Avoids unstructured entirely — just decode, split by lines, and
+    detect Markdown headings natively. No external deps needed.
+    """
+    text = file_bytes.decode("utf-8", errors="replace")
+    lines = text.splitlines()
+    parts = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        heading_match = _HEADING_RE.match(stripped)
+        if heading_match:
+            level = len(heading_match.group(1))
+            parts.append({
+                "text":       stripped,
+                "page":       None,
+                "category":   "Title" if level <= 2 else "Header",
+                "is_heading": True,
+                "is_table":   False,
+            })
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            parts.append({
+                "text":       stripped,
+                "page":       None,
+                "category":   "ListItem",
+                "is_heading": False,
+                "is_table":   False,
+            })
+        else:
+            parts.append({
+                "text":       stripped,
+                "page":       None,
+                "category":   "NarrativeText",
+                "is_heading": False,
+                "is_table":   False,
+            })
+
+    return parts
+
+
 def _parse_to_elements(file_bytes: bytes, filename: str) -> list[dict]:
     """
-    Use `unstructured` to partition any document into structured elements.
-    Returns list of dicts with: text, page, category, is_heading.
+    Parse any supported document into structured elements.
+    For .md / .txt: use lightweight native parser (fast, no deps).
+    For .pdf / .docx: use unstructured library.
     """
+    ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+
+    # ── Native parser for text-based formats ────────────────────────────
+    if ext in _TEXT_EXTENSIONS:
+        logger.info(f"Using native text parser for {filename}")
+        return _parse_text_native(file_bytes, filename)
+
+    # ── Unstructured for PDF, DOCX ──────────────────────────────────────
     from unstructured.partition.auto import partition
 
     elements = partition(
@@ -70,6 +128,7 @@ def _parse_to_elements(file_bytes: bytes, filename: str) -> list[dict]:
             "page":       page,
             "category":   cat,
             "is_heading": cat in ("Title", "Header"),
+            "is_table":   cat == "Table",
         })
 
     return parts
@@ -80,7 +139,8 @@ def _parse_to_elements(file_bytes: bytes, filename: str) -> list[dict]:
 def _group_into_sections(parts: list[dict]) -> list[dict]:
     """
     Group elements by heading boundaries.
-    Returns list of section dicts: { heading, page, texts: [(text, page), …] }
+    Returns list of section dicts:
+      { heading, page, texts: [(text, page, is_table), …] }
     """
     sections = []
     current = {"heading": None, "page": None, "texts": []}
@@ -98,7 +158,9 @@ def _group_into_sections(parts: list[dict]) -> list[dict]:
         else:
             if current["page"] is None and p["page"]:
                 current["page"] = p["page"]
-            current["texts"].append((p["text"], p["page"]))
+            current["texts"].append(
+                (p["text"], p["page"], p.get("is_table", False))
+            )
 
     if current["texts"]:
         sections.append(current)
@@ -126,6 +188,10 @@ def _preprocess_contract(parts: list[dict]) -> list[dict]:
     return processed
 
 
+# Max words for a "short label" that should stay attached to a table
+_TABLE_LABEL_MAX_WORDS = 40
+
+
 def _chunk_sections(
     sections: list[dict],
     max_words: int,
@@ -137,10 +203,30 @@ def _chunk_sections(
 ) -> list[dict]:
     """
     Chunk sections respecting word limits, with overlap for context continuity.
-    For resumes: allow 50% overshoot to keep sections intact.
+
+    Table-aware: tables are never split. If a table is encountered, any short
+    preceding text (caption / label, ≤40 words) is kept with the table.
+
+    For resumes: allow 150% overshoot to keep sections intact.
     """
     chunks = []
     counter = 0
+
+    def _emit(text: str, page, heading):
+        """Helper to create and append a chunk."""
+        nonlocal counter
+        if text.strip():
+            chunks.append({
+                "chunk_id":    f"{doc_id}_p{page or 0}_c{counter}",
+                "text":        text,
+                "doc_id":      doc_id,
+                "doc_name":    doc_name,
+                "doc_type":    doc_type,
+                "user_id":     user_id,
+                "page_number": page,
+                "heading":     heading,
+            })
+            counter += 1
 
     for sec in sections:
         heading    = sec["heading"]
@@ -148,44 +234,50 @@ def _chunk_sections(
 
         # ── Resume heuristic: keep small sections whole ───────────────────
         if doc_type == "resume":
-            combined = "\n\n".join(t for t, _ in sec["texts"])
-            if len(combined.split()) <= int(max_words * 1.5):
-                if combined.strip():
-                    chunks.append({
-                        "chunk_id":    f"{doc_id}_p{chunk_page or 0}_c{counter}",
-                        "text":        combined,
-                        "doc_id":      doc_id,
-                        "doc_name":    doc_name,
-                        "doc_type":    doc_type,
-                        "user_id":     user_id,
-                        "page_number": chunk_page,
-                        "heading":     heading,
-                    })
-                    counter += 1
+            combined = "\n\n".join(t for t, _, _tbl in sec["texts"])
+            if len(combined.split()) <= int(max_words * 2.5):
+                _emit(combined, chunk_page, heading)
                 continue
 
-        # ── Standard chunking with overlap ────────────────────────────────
+        # ── Standard chunking with table-awareness ────────────────────────
         buffer_texts: list[str] = []
         buffer_words = 0
 
-        for text, page in sec["texts"]:
+        for text, page, is_table in sec["texts"]:
             text_words = len(text.split())
 
+            if is_table:
+                # ── TABLE: treat as an atomic, unsplittable unit ──────────
+
+                # Check if the last buffer item is a short label/caption
+                # that should stay attached to this table for context
+                label = ""
+                if (buffer_texts
+                        and len(buffer_texts[-1].split()) <= _TABLE_LABEL_MAX_WORDS):
+                    label = buffer_texts.pop()
+                    buffer_words -= len(label.split())
+
+                # Flush any remaining pre-table buffer as its own chunk
+                if buffer_texts:
+                    chunk_text = "\n\n".join(buffer_texts)
+                    _emit(chunk_text, chunk_page, heading)
+                    buffer_texts = []
+                    buffer_words = 0
+
+                # Emit the table (with its label) as a single atomic chunk
+                table_chunk = f"{label}\n\n{text}" if label else text
+                if page:
+                    chunk_page = page
+                _emit(table_chunk, chunk_page, heading)
+
+                # No overlap carry-over after a table — start fresh
+                continue
+
+            # ── Regular (non-table) element ───────────────────────────────
             if buffer_words + text_words > max_words and buffer_texts:
                 # Flush current buffer as a chunk
                 chunk_text = "\n\n".join(buffer_texts)
-                if chunk_text.strip():
-                    chunks.append({
-                        "chunk_id":    f"{doc_id}_p{chunk_page or 0}_c{counter}",
-                        "text":        chunk_text,
-                        "doc_id":      doc_id,
-                        "doc_name":    doc_name,
-                        "doc_type":    doc_type,
-                        "user_id":     user_id,
-                        "page_number": chunk_page,
-                        "heading":     heading,
-                    })
-                    counter += 1
+                _emit(chunk_text, chunk_page, heading)
 
                 # Overlap: carry last N words into the next chunk
                 all_words = chunk_text.split()
@@ -205,18 +297,7 @@ def _chunk_sections(
         # Flush remainder
         if buffer_texts:
             chunk_text = "\n\n".join(buffer_texts)
-            if chunk_text.strip():
-                chunks.append({
-                    "chunk_id":    f"{doc_id}_p{chunk_page or 0}_c{counter}",
-                    "text":        chunk_text,
-                    "doc_id":      doc_id,
-                    "doc_name":    doc_name,
-                    "doc_type":    doc_type,
-                    "user_id":     user_id,
-                    "page_number": chunk_page,
-                    "heading":     heading,
-                })
-                counter += 1
+            _emit(chunk_text, chunk_page, heading)
 
     return chunks
 

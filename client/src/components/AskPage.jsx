@@ -1,7 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react'
 import { MessageSquare, Send, FileText, Eye, X, Upload, Trash2, FolderOpen } from 'lucide-react'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { ask } from '../api'
 import DocumentPreview from './DocumentPreview'
+
+// ── Module-level: survives component unmount/remount ────────────────────────
+// Stores the in-flight ask promise so we can re-subscribe on remount.
+let _pendingAsk = null
 
 // ── Typing indicator ──────────────────────────────────────────────────────────
 function TypingIndicator() {
@@ -25,7 +31,13 @@ function ChatMessage({ msg, onCitationClick, activeCitationId }) {
   return (
     <div className={`chat-msg chat-msg--${msg.role}`}>
       <div className="chat-msg-bubble">
-        <p className="chat-msg-text">{msg.content}</p>
+        {isUser ? (
+          <p className="chat-msg-text">{msg.content}</p>
+        ) : (
+          <div className="chat-msg-text markdown-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+          </div>
+        )}
       </div>
 
       {!isUser && msg.citations?.length > 0 && (
@@ -62,7 +74,7 @@ export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDoc
   })
 
   const [input, setInput]                   = useState('')
-  const [isLoading, setIsLoading]           = useState(false)
+  const [isLoading, setIsLoading]           = useState(!!_pendingAsk)
   const [previewPage, setPreviewPage]       = useState(null)
   const [highlightQuote, setHighlightQuote] = useState(null)
   const [activeCitationId, setActiveCitationId] = useState(null)
@@ -79,6 +91,26 @@ export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDoc
       sessionStorage.removeItem('docagent_chat_messages')
     }
   }, [messages])
+
+  // Re-subscribe to an in-flight ask request that was started before unmount
+  useEffect(() => {
+    if (!_pendingAsk) return
+    let cancelled = false
+
+    setIsLoading(true)
+    _pendingAsk.finally(() => {
+      if (cancelled) return
+      // The promise handler already wrote the response to sessionStorage.
+      // Re-read from there to pick up the latest messages.
+      try {
+        const stored = JSON.parse(sessionStorage.getItem('docagent_chat_messages') || '[]')
+        setMessages(stored)
+      } catch { /* best-effort */ }
+      setIsLoading(false)
+    })
+
+    return () => { cancelled = true }
+  }, [])
 
   // Auto-scroll on new messages
   useEffect(() => {
@@ -112,26 +144,41 @@ export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDoc
     // Single-doc querying — only the active document
     const docIds = [activeDoc.doc_id]
 
-    try {
-      const allMsgs = [...messages, userMsg]
-      const conversationHistory = allMsgs.slice(-10).map(m => ({
-        role: m.role,
-        content: m.content
-      }))
+    const allMsgs = [...messages, userMsg]
+    const conversationHistory = allMsgs.slice(-10).map(m => ({
+      role: m.role,
+      content: m.content
+    }))
 
-      const res = await ask(question, docIds, conversationHistory)
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: res.answer,
-        citations: res.citations
-      }])
-    } catch (err) {
-      setMessages(prev => [...prev, {
-        role: 'assistant',
-        content: `Sorry, something went wrong: ${err.message}`,
-        citations: []
-      }])
+    const t0 = performance.now()
+
+    // Store the promise at module level so it survives unmount/remount.
+    // The chain: API call → build message → persist to sessionStorage → return message.
+    _pendingAsk = ask(question, docIds, conversationHistory)
+      .then(res => {
+        const ttft = ((performance.now() - t0) / 1000).toFixed(2)
+        console.log(`⏱ TTFT (client round-trip): ${ttft}s`)
+        return { role: 'assistant', content: res.answer, citations: res.citations }
+      })
+      .catch(() => {
+        return { role: 'assistant', content: 'Sorry, something went wrong. Please try again.', citations: [] }
+      })
+      .then(msg => {
+        // Persist to sessionStorage — works even if the component unmounted.
+        try {
+          const stored = JSON.parse(sessionStorage.getItem('docagent_chat_messages') || '[]')
+          stored.push(msg)
+          sessionStorage.setItem('docagent_chat_messages', JSON.stringify(stored.slice(-100)))
+        } catch { /* best-effort */ }
+        return msg
+      })
+
+    try {
+      const msg = await _pendingAsk
+      // Update React state (only effective if component is still mounted)
+      setMessages(prev => [...prev, msg])
     } finally {
+      _pendingAsk = null
       setIsLoading(false)
     }
   }
