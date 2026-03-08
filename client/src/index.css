@@ -119,12 +119,13 @@ body {
    APP SHELL
 ───────────────────────────────────────────────────────────── */
 .app-root {
-  height: 100vh;
+  /* height: 100vh; fallback for older browsers */
+  height: 100dvh; /* adapts to mobile browser chrome (URL bar) */
   display: flex;
   flex-direction: column;
   background: var(--bg-base);
-  overflow: hidden;
-  contain: paint;  /* clips ALL descendants including position:fixed */
+  /* overflow: hidden; */
+  contain: paint; /* clips ALL descendants including position:fixed */
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -978,8 +979,6 @@ body {
     0 4px 32px rgba(44, 38, 32, 0.22),
     0 1px 4px rgba(44, 38, 32, 0.1);
   border-radius: 3px;
-  max-width: 100%;
-  height: auto;  /* scale proportionally when max-width constrains width */
 }
 
 /* DOCX */
@@ -1701,8 +1700,13 @@ body {
 }
 
 @keyframes pulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
 }
 
 .file-status-check {
@@ -1735,11 +1739,11 @@ body {
   flex: 1;
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  min-width: 380px;
 }
 
 .ask-preview-panel {
-  width: 420px;
+  flex: 1;
   min-width: 320px;
   border-left: 1px solid var(--border-subtle);
   display: flex;
@@ -1856,12 +1860,20 @@ body {
   line-height: 1.3;
 }
 
-.markdown-body h1 { font-size: 1.25em; }
-.markdown-body h2 { font-size: 1.12em; }
-.markdown-body h3 { font-size: 1.02em; }
+.markdown-body h1 {
+  font-size: 1.25em;
+}
+.markdown-body h2 {
+  font-size: 1.12em;
+}
+.markdown-body h3 {
+  font-size: 1.02em;
+}
 .markdown-body h4,
 .markdown-body h5,
-.markdown-body h6 { font-size: 0.95em; }
+.markdown-body h6 {
+  font-size: 0.95em;
+}
 
 /* Paragraphs */
 .markdown-body p {
@@ -1912,12 +1924,16 @@ body {
   list-style-type: decimal;
 }
 
-.markdown-body ul ul { list-style-type: circle; }
-.markdown-body ul ul ul { list-style-type: square; }
+.markdown-body ul ul {
+  list-style-type: circle;
+}
+.markdown-body ul ul ul {
+  list-style-type: square;
+}
 
 /* Inline code */
 .markdown-body code {
-  font-family: var(--font-mono, 'IBM Plex Mono', monospace);
+  font-family: var(--font-mono, "IBM Plex Mono", monospace);
   font-size: 0.82em;
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
@@ -2219,12 +2235,24 @@ body {
   animation: typingBounce 1.2s ease-in-out infinite;
 }
 
-.typing-dot:nth-child(2) { animation-delay: 0.15s; }
-.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+.typing-dot:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.typing-dot:nth-child(3) {
+  animation-delay: 0.3s;
+}
 
 @keyframes typingBounce {
-  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
-  30% { transform: translateY(-6px); opacity: 1; }
+  0%,
+  60%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.4;
+  }
+  30% {
+    transform: translateY(-6px);
+    opacity: 1;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -2257,6 +2285,7 @@ body {
 @media (max-width: 768px) {
   .ask-chat-area {
     width: 100%;
+    min-width: 0;
   }
 
   .ask-preview-panel {
@@ -2273,16 +2302,18 @@ body {
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
     box-shadow: 0 -8px 32px rgba(44, 38, 32, 0.2);
     transform: translateY(100%);
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-                visibility 0s 0.3s;  /* delay hiding until transition ends */
+    transition:
+      transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      visibility 0s 0.3s; /* delay hiding until transition ends */
     visibility: hidden;
   }
 
   .ask-preview-panel--open {
     transform: translateY(0);
     visibility: visible;
-    transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-                visibility 0s 0s;  /* show immediately */
+    transition:
+      transform 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+      visibility 0s 0s; /* show immediately */
   }
 
   .ask-preview-handle {
@@ -2362,13 +2393,19 @@ body {
    CITATION HIGHLIGHT
 ───────────────────────────────────────────────────────────── */
 @keyframes highlightPulse {
-  0%   { background-color: rgba(212, 175, 55, 0.55); }
-  60%  { background-color: rgba(212, 175, 55, 0.30); }
-  100% { background-color: rgba(212, 175, 55, 0.20); }
+  0% {
+    background-color: rgba(212, 175, 55, 0.55);
+  }
+  60% {
+    background-color: rgba(212, 175, 55, 0.3);
+  }
+  100% {
+    background-color: rgba(212, 175, 55, 0.2);
+  }
 }
 
 .citation-highlight {
-  background-color: rgba(212, 175, 55, 0.20);
+  background-color: rgba(212, 175, 55, 0.2);
   border-radius: 2px;
   padding: 1px 0;
   animation: highlightPulse 1.5s ease-out;
@@ -2389,7 +2426,7 @@ body {
   top: 0;
   left: 0;
   overflow: hidden;
-  line-height: 1.0;
+  line-height: 1;
   z-index: 2;
 }
 
@@ -2628,8 +2665,12 @@ body {
 }
 
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .delete-dialog {
@@ -3214,14 +3255,28 @@ body {
   border-radius: 8px;
   text-transform: lowercase;
 }
-.admin-status--none { color: var(--text-muted); }
-.admin-status--active { color: #3d7a5a; background: rgba(106, 171, 138, 0.1); }
+.admin-status--none {
+  color: var(--text-muted);
+}
+.admin-status--active {
+  color: #3d7a5a;
+  background: rgba(106, 171, 138, 0.1);
+}
 .admin-status--cancelled,
-.admin-status--expired { color: #c47a6a; background: rgba(196, 122, 106, 0.1); }
-.admin-status--halted { color: #9a6f2c; background: rgba(212, 160, 86, 0.1); }
+.admin-status--expired {
+  color: #c47a6a;
+  background: rgba(196, 122, 106, 0.1);
+}
+.admin-status--halted {
+  color: #9a6f2c;
+  background: rgba(212, 160, 86, 0.1);
+}
 .admin-status--created,
 .admin-status--authenticated,
-.admin-status--pending { color: var(--accent); background: var(--accent-subtle); }
+.admin-status--pending {
+  color: var(--accent);
+  background: var(--accent-subtle);
+}
 
 .admin-delete-btn {
   background: none;

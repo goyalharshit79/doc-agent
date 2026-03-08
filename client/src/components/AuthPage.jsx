@@ -7,23 +7,39 @@ export default function AuthPage({ onAuth }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState(null);
   const [loading, setLoading] = useState(false);
   const [notice, setNotice] = useState(null);
 
   // Check URL for password reset token on mount
+  // Supports two Supabase flows:
+  //   Modern:  ?token_hash=xxx&type=recovery  (query params)
+  //   Legacy:  #access_token=xxx&type=recovery (hash fragment)
   useEffect(() => {
+    // 1. Modern flow — token_hash in query params
+    const searchParams = new URLSearchParams(window.location.search);
+    const tokenHash = searchParams.get("token_hash");
+    const queryType = searchParams.get("type");
+    if (tokenHash && queryType === "recovery") {
+      localStorage.setItem("docagent_reset_token_hash", tokenHash);
+      localStorage.removeItem("docagent_reset_token"); // clear stale legacy token
+      setMode("reset");
+      window.history.replaceState(null, "", window.location.pathname);
+      return;
+    }
+
+    // 2. Legacy flow — access_token in hash fragment
     const hash = window.location.hash;
     if (hash) {
       const params = new URLSearchParams(hash.substring(1));
       const accessToken = params.get("access_token");
       const type = params.get("type");
       if (accessToken && type === "recovery") {
-        // Store token and switch to reset mode
         localStorage.setItem("docagent_reset_token", accessToken);
+        localStorage.removeItem("docagent_reset_token_hash"); // clear stale modern token
         setMode("reset");
-        // Clean up URL
         window.history.replaceState(null, "", window.location.pathname);
       }
     }
@@ -63,21 +79,28 @@ export default function AuthPage({ onAuth }) {
         setError("Password must be at least 8 characters.");
         return;
       }
+      if (newPassword !== confirmPassword) {
+        setError("Passwords do not match.");
+        return;
+      }
       setLoading(true);
       try {
-        const token = localStorage.getItem("docagent_reset_token");
-        if (!token) {
+        const tokenHash = localStorage.getItem("docagent_reset_token_hash");
+        const accessToken = localStorage.getItem("docagent_reset_token");
+        if (!tokenHash && !accessToken) {
           setError("Reset token missing. Please request a new link.");
           setLoading(false);
           return;
         }
-        await resetPassword(token, newPassword);
+        await resetPassword({ tokenHash, accessToken, newPassword });
         localStorage.removeItem("docagent_reset_token");
+        localStorage.removeItem("docagent_reset_token_hash");
         setNotice(
           "Password updated! You can now sign in with your new password.",
         );
         setMode("login");
         setNewPassword("");
+        setConfirmPassword("");
       } catch (e) {
         setError(e.message);
       } finally {
@@ -90,6 +113,16 @@ export default function AuthPage({ onAuth }) {
     if (!email || !password) {
       setError("Email and password are required.");
       return;
+    }
+    if (mode === "signup") {
+      if (password.length < 8) {
+        setError("Password must be at least 8 characters.");
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError("Passwords do not match.");
+        return;
+      }
     }
 
     setLoading(true);
@@ -244,6 +277,32 @@ export default function AuthPage({ onAuth }) {
             </div>
           )}
 
+          {/* Confirm password — shown for signup */}
+          {mode === "signup" && (
+            <div className="auth-field">
+              <label className="auth-label">Confirm Password</label>
+              <div className="auth-input-wrap">
+                <input
+                  className="auth-input auth-input--has-toggle"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Retype your password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onKeyDown={handleKey}
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* New password — shown for reset */}
           {mode === "reset" && (
             <div className="auth-field">
@@ -257,6 +316,32 @@ export default function AuthPage({ onAuth }) {
                   onChange={(e) => setNewPassword(e.target.value)}
                   onKeyDown={handleKey}
                   autoFocus
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  tabIndex={-1}
+                  aria-label={showPassword ? "Hide password" : "Show password"}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Confirm new password — shown for reset */}
+          {mode === "reset" && (
+            <div className="auth-field">
+              <label className="auth-label">Confirm New Password</label>
+              <div className="auth-input-wrap">
+                <input
+                  className="auth-input auth-input--has-toggle"
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Retype your new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  onKeyDown={handleKey}
                 />
                 <button
                   type="button"
@@ -329,8 +414,10 @@ export default function AuthPage({ onAuth }) {
           )}
         </button>
       </div>
-
       <p className="auth-footer">Your documents, intelligently indexed.</p>
+      <p className="auth-footer">
+        © 2026 DocAgent • Crafted by Harshit Goyal • goyalharshit79@gmail.com
+      </p>
     </div>
   );
 }

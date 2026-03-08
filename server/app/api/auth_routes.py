@@ -36,7 +36,7 @@ def get_supabase():
 def signup(body: AuthRequest):
     try:
         sb = get_supabase()
-        
+
         res = sb.auth.sign_up({"email": body.email, "password": body.password})
 
         if not res.user:
@@ -105,7 +105,8 @@ class ForgotPasswordRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    access_token: str
+    access_token: str | None = None   # legacy implicit-flow token (hash fragment)
+    token_hash: str | None = None     # modern Supabase token-hash (query param)
     new_password: str
 
 
@@ -123,16 +124,42 @@ def forgot_password(body: ForgotPasswordRequest):
 
 @router.post("/reset-password")
 def reset_password(body: ResetPasswordRequest):
-    """Reset password using the token from the Supabase reset email."""
+    """Reset password using the token from the Supabase reset email.
+
+    Supports two flows:
+      1. Modern (default): token_hash from ?token_hash=xxx&type=recovery
+      2. Legacy implicit: access_token from #access_token=xxx&type=recovery
+    """
     try:
         sb = get_supabase()
-        # Use the access_token from the reset link to update the password
-        user_resp = sb.auth.get_user(body.access_token)
-        if not user_resp or not user_resp.user:
+        user_id = None
+
+        # Modern flow — verify the token hash via OTP
+        if body.token_hash:
+            try:
+                resp = sb.auth.verify_otp({
+                    "token_hash": body.token_hash,
+                    "type": "recovery",
+                })
+                if resp.user:
+                    user_id = resp.user.id
+            except Exception as e:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid or expired reset link: {str(e)}",
+                )
+
+        # Legacy flow — verify access_token directly
+        elif body.access_token:
+            user_resp = sb.auth.get_user(body.access_token)
+            if user_resp and user_resp.user:
+                user_id = user_resp.user.id
+
+        if not user_id:
             raise HTTPException(status_code=400, detail="Invalid or expired reset token")
 
         res = sb.auth.admin.update_user_by_id(
-            user_resp.user.id,
+            user_id,
             {"password": body.new_password},
         )
         if not res.user:

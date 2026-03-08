@@ -108,7 +108,10 @@ def update_user(
         if body.plan not in ("free", "pro"):
             raise HTTPException(status_code=400, detail="Plan must be 'free' or 'pro'")
         update_data["plan"] = body.plan
-    if body.is_unlimited is not None:
+        # Pro plan always gets unlimited; downgrade to free removes it
+        update_data["is_unlimited"] = (body.plan == "pro")
+    if body.is_unlimited is not None and body.plan is None:
+        # Only honour explicit is_unlimited toggle when plan isn't being changed
         update_data["is_unlimited"] = body.is_unlimited
 
     if not update_data:

@@ -201,9 +201,10 @@ def handle_razorpay_event(event_type: str, payload: dict):
     if event_type == "subscription.activated":
         sb.table("user_profiles").update({
             "plan": "pro",
+            "is_unlimited": True,
             "subscription_status": "active",
         }).eq("user_id", user_id).execute()
-        logger.info(f"User {user_id} upgraded to Pro")
+        logger.info(f"User {user_id} upgraded to Pro (unlimited)")
 
     elif event_type == "subscription.charged":
         sb.table("user_profiles").update({
@@ -213,6 +214,7 @@ def handle_razorpay_event(event_type: str, payload: dict):
     elif event_type in ("subscription.cancelled", "subscription.completed", "subscription.expired"):
         sb.table("user_profiles").update({
             "plan": "free",
+            "is_unlimited": False,
             "subscription_status": status or "cancelled",
         }).eq("user_id", user_id).execute()
         logger.info(f"User {user_id} downgraded to Free ({event_type})")

@@ -49,11 +49,12 @@ export default function AdminConsole() {
 
   const handleTogglePlan = async (user) => {
     const newPlan = user.plan === 'pro' ? 'free' : 'pro'
+    const newUnlimited = newPlan === 'pro'  // pro always means unlimited
     setActionLoading(user.user_id)
     try {
       await updateAdminUser(user.user_id, { plan: newPlan })
       setUsers(prev => prev.map(u =>
-        u.user_id === user.user_id ? { ...u, plan: newPlan } : u
+        u.user_id === user.user_id ? { ...u, plan: newPlan, is_unlimited: newUnlimited } : u
       ))
     } catch (err) {
       setError(`Failed to update ${user.email}: ${err.message}`)

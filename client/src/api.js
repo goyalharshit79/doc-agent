@@ -196,11 +196,15 @@ export async function forgotPassword(email) {
   return res.json()
 }
 
-export async function resetPassword(accessToken, newPassword) {
+export async function resetPassword({ accessToken, tokenHash, newPassword }) {
+  const payload = { new_password: newPassword }
+  if (tokenHash) payload.token_hash = tokenHash
+  else if (accessToken) payload.access_token = accessToken
+
   const res = await fetch(`${BASE}/auth/reset-password`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ access_token: accessToken, new_password: newPassword }),
+    body: JSON.stringify(payload),
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Reset failed' }))

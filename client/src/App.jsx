@@ -483,6 +483,10 @@ export default function App() {
                     Upload PDFs, Word docs, or text files. Ask questions, study,
                     extract — all with exact citations.
                   </p>
+                  <p className="auth-footer">
+                    © 2026 DocAgent • Crafted by Harshit Goyal •
+                    goyalharshit79@gmail.com
+                  </p>
                 </div>
                 <UploadZone
                   onFilesAdded={handleFilesAdded}
