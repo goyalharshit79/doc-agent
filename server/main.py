@@ -9,6 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.core.config import get_settings
 from app.api.routes import router
 from app.api.auth_routes import router as auth_router
+from app.api.billing_routes import router as billing_router
+from app.api.admin_routes import router as admin_router
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -36,8 +38,10 @@ def create_app() -> FastAPI:
         allow_headers     = ["*"],
     )
 
-    app.include_router(auth_router, prefix="/api")   # /api/auth/signup, /api/auth/login
-    app.include_router(router, prefix="/api")        # /api/upload, /api/ask, /api/documents
+    app.include_router(auth_router, prefix="/api")       # /api/auth/signup, /api/auth/login
+    app.include_router(router, prefix="/api")            # /api/upload, /api/ask, /api/documents, /api/usage
+    app.include_router(billing_router, prefix="/api")    # /api/billing/subscribe, /api/billing/webhook/razorpay
+    app.include_router(admin_router, prefix="/api")      # /api/admin/users
 
     @app.on_event("startup")
     async def _setup_thread_pool():

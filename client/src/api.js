@@ -2,7 +2,10 @@
 // In development: falls back to localhost:8000
 const BASE = import.meta.env.VITE_API_URL || `http://${window.location.hostname}:8000/api`
 
-// ── Friendly error mapping ──────────────────────────────────────────────────
+// ── Structured error codes from backend ────────────────────────────────────
+// Guards return JSON detail: { code, message, current, limit, plan }
+// We parse these and attach them to the Error object for UI-level handling.
+
 function friendlyError(err, context = 'general') {
   const msg = (err?.message || err || '').toLowerCase()
 
@@ -47,8 +50,19 @@ async function handleResponse(res) {
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: 'Unknown error' }))
     const detail = err.detail || 'Request failed'
-    // Throw internal detail for auth-layer callers to remap; generic callers get friendly text
-    throw new Error(detail)
+
+    // If detail is a structured object (from guards), create a rich error
+    if (typeof detail === 'object' && detail.code) {
+      const error = new Error(detail.message || 'Request failed')
+      error.code = detail.code            // e.g. "DOCUMENT_LIMIT", "QUERY_LIMIT"
+      error.current = detail.current
+      error.limit = detail.limit
+      error.plan = detail.plan
+      error.status = res.status
+      throw error
+    }
+
+    throw new Error(typeof detail === 'string' ? detail : JSON.stringify(detail))
   }
   return res.json()
 }
@@ -171,6 +185,30 @@ export async function login(email, password) {
   }
 }
 
+// ── Forgot / Reset Password ──────────────────────────────────────────────────
+
+export async function forgotPassword(email) {
+  const res = await fetch(`${BASE}/auth/forgot-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+  return res.json()
+}
+
+export async function resetPassword(accessToken, newPassword) {
+  const res = await fetch(`${BASE}/auth/reset-password`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ access_token: accessToken, new_password: newPassword }),
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Reset failed' }))
+    throw new Error(err.detail || 'Password reset failed')
+  }
+  return res.json()
+}
+
 // ── Utilities ─────────────────────────────────────────────────────────────────
 
 /** Compute deterministic doc_id matching the backend: sha256(filename:size)[:16] */
@@ -197,8 +235,8 @@ export async function uploadDocument(file, docType = 'general') {
 }
 
 export async function listDocuments() {
-  return authFetch(`${BASE}/documents`, { 
-    headers: { 'Content-Type': 'application/json' } 
+  return authFetch(`${BASE}/documents`, {
+    headers: { 'Content-Type': 'application/json' }
   })
 }
 
@@ -222,4 +260,43 @@ export async function ask(question, docIds, conversationHistory = []) {
       conversation_history: conversationHistory,
     }),
   }, 180_000)
+}
+
+// ── Usage / Billing ─────────────────────────────────────────────────────────────
+
+export async function getUsage() {
+  return authFetch(`${BASE}/usage`, {
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+export async function createSubscription(email) {
+  return authFetch(`${BASE}/billing/subscribe`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email }),
+  })
+}
+
+// ── Admin ───────────────────────────────────────────────────────────────────────
+
+export async function getAdminUsers() {
+  return authFetch(`${BASE}/admin/users`, {
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
+
+export async function updateAdminUser(userId, data) {
+  return authFetch(`${BASE}/admin/users/${userId}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+}
+
+export async function deleteAdminUser(userId) {
+  return authFetch(`${BASE}/admin/users/${userId}`, {
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json' },
+  })
 }

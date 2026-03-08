@@ -5,6 +5,7 @@ import time
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 
 from app.core.auth import get_current_user_id
+from app.core.guards import check_upload_limit, check_query_limit
 from app.models.schemas import AskRequest, AskResponse, DocMeta, DocType, UploadResponse
 from app.services.parser import make_doc_id, parse_document
 from app.services.vector_store import (
@@ -15,6 +16,7 @@ from app.services.vector_store import (
     get_doc_meta_by_id,
 )
 from app.services.llm import run_rag
+from app.services.billing import get_usage as billing_get_usage, increment_query_count
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -29,7 +31,7 @@ MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
 async def upload_document(
     file: UploadFile = File(...),
     doc_type: str = Form("general"),               # ← user selects from dropdown
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(check_upload_limit),     # ← enforces document limit
 ):
     # Validate extension
     ext = file.filename.rsplit(".", 1)[-1].lower() if file.filename else ""
@@ -149,7 +151,7 @@ async def delete_document(
 @router.post("/ask", response_model=AskResponse)
 async def ask_question(
     request: AskRequest,
-    user_id: str = Depends(get_current_user_id),
+    user_id: str = Depends(check_query_limit),      # ← enforces daily query limit
 ):
     if not request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
@@ -168,10 +170,21 @@ async def ask_question(
         # run_rag now takes user_id for metadata-filtered hybrid search
         response = await asyncio.to_thread(run_rag, request, user_id)
         logger.info(f"⏱  ASK TOTAL   {time.perf_counter() - t0:.2f}s  (question: {request.question[:60]})")
+
+        # Increment query counter AFTER successful response (failed queries don't count)
+        await asyncio.to_thread(increment_query_count, user_id)
+
         return response
     except Exception as e:
         logger.exception("RAG pipeline failed")
         raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
 
 
+# ── GET /usage ───────────────────────────────────────────────────────────────
+
+@router.get("/usage")
+async def get_usage(user_id: str = Depends(get_current_user_id)):
+    """Return current plan limits and usage for the authenticated user."""
+    usage = await asyncio.to_thread(billing_get_usage, user_id)
+    return usage
 

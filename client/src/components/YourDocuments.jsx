@@ -15,7 +15,7 @@ function formatDate(dateStr) {
   return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
-export default function YourDocuments({ onSelectDoc, user }) {
+export default function YourDocuments({ onSelectDoc, user, onUsageChanged }) {
   const [docs, setDocs]           = useState([])
   const [loading, setLoading]     = useState(true)
   const [error, setError]         = useState(null)
@@ -66,6 +66,8 @@ export default function YourDocuments({ onSelectDoc, user }) {
       await deleteDocument(deleteTarget.doc_id)
       setDocs(prev => prev.filter(d => d.doc_id !== deleteTarget.doc_id))
       setDeleteTarget(null)
+      // Refresh usage after delete (frees up a document slot)
+      if (onUsageChanged) onUsageChanged()
     } catch (err) {
       setError('Could not delete the document. Please try again.')
       setDeleteTarget(null)

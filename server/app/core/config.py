@@ -28,6 +28,20 @@ class Settings(BaseSettings):
     llm_model: str = "gemini-2.5-pro"
     query_rewrite_model: str = "gemini-2.5-flash"    # cheap/fast for rewrites
 
+    # ── Razorpay ─────────────────────────────────────────────────────────────
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_plan_id: str = ""           # Razorpay Plan ID for Pro subscription
+    razorpay_webhook_secret: str = ""
+
+    # ── Plan limits ──────────────────────────────────────────────────────────
+    free_max_documents: int = 1
+    free_max_queries_per_day: int = 10
+    pro_max_documents: int = 20
+
+    # ── Admin ────────────────────────────────────────────────────────────────
+    admin_email: str = "goyalharshit79@gmail.com"
+
     # Adaptive chunk sizes (words) per document type
     chunk_config: dict = {
         "contract":       {"size": 600, "overlap": 100},

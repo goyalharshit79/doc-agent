@@ -62,7 +62,7 @@ function ChatMessage({ msg, onCitationClick, activeCitationId }) {
 }
 
 // ── Main AskPage ──────────────────────────────────────────────────────────────
-export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDocs }) {
+export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDocs, usage, onUpgradeClick, onUsageChanged }) {
   // ── Chat persistence via sessionStorage ───────────────────────────────────
   const [messages, setMessages] = useState(() => {
     try {
@@ -160,7 +160,16 @@ export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDoc
         console.log(`⏱ TTFT (client round-trip): ${ttft}s`)
         return { role: 'assistant', content: res.answer, citations: res.citations }
       })
-      .catch(() => {
+      .catch((err) => {
+        // Handle query limit error
+        if (err.code === 'QUERY_LIMIT') {
+          return {
+            role: 'assistant',
+            content: `You've used all your questions for today. Upgrade to Pro for unlimited questions.`,
+            citations: [],
+            _limitReached: true,
+          }
+        }
         return { role: 'assistant', content: 'Sorry, something went wrong. Please try again.', citations: [] }
       })
       .then(msg => {
@@ -177,6 +186,10 @@ export default function AskPage({ activeDoc, onNavigateToUpload, onNavigateToDoc
       const msg = await _pendingAsk
       // Update React state (only effective if component is still mounted)
       setMessages(prev => [...prev, msg])
+      // Refresh usage after each question
+      if (onUsageChanged) onUsageChanged()
+      // If limit was reached, show upgrade modal
+      if (msg._limitReached && onUpgradeClick) onUpgradeClick()
     } finally {
       _pendingAsk = null
       setIsLoading(false)

@@ -13,6 +13,7 @@ import {
   PanelLeft,
   ChevronLeft,
   FolderOpen,
+  Shield,
 } from "lucide-react";
 import AuthPage from "./components/AuthPage";
 import UploadZone from "./components/UploadZone";
@@ -20,8 +21,14 @@ import FileList from "./components/FileList";
 import DocumentPreview from "./components/DocumentPreview";
 import AskPage from "./components/AskPage";
 import YourDocuments from "./components/YourDocuments";
-import { uploadDocument } from "./api";
+import UsageBadge from "./components/UsageBadge";
+import UpgradeModal from "./components/UpgradeModal";
+import AdminConsole from "./components/AdminConsole";
+import { uploadDocument, getUsage } from "./api";
 import { get, set, del } from "idb-keyval";
+
+// ── Admin email ─────────────────────────────────────────────────────────────
+const ADMIN_EMAIL = "goyalharshit79@gmail.com";
 
 // ── Placeholder pages for upcoming features ──────────────────────────────────
 const PAGE_ICONS = { study: BookOpen, extract: FileOutput };
@@ -52,8 +59,31 @@ export default function App() {
 
   const handleAuth = (userData) => setUser(userData);
 
+  // ── Usage / billing state ─────────────────────────────────────────────────
+  const [usage, setUsage] = useState(null);
+  const [upgradeModalOpen, setUpgradeModalOpen] = useState(false);
+
+  const refreshUsage = useCallback(async () => {
+    try {
+      const data = await getUsage();
+      setUsage(data);
+    } catch (err) {
+      console.warn("Failed to fetch usage:", err);
+    }
+  }, []);
+
+  // Fetch usage on login
+  useEffect(() => {
+    if (user) refreshUsage();
+  }, [user, refreshUsage]);
+
+  // Check if current user is admin
+  const isAdmin = user?.email === ADMIN_EMAIL;
+
+  // Build nav pages (add admin if admin user)
+  const navPages = isAdmin ? [...PAGES, "admin"] : PAGES;
+
   // ── Navigation state ───────────────────────────────────────────────────────
-  // const pageOn = localStorage.getItem("activePage");
   const [activePage, setActivePage] = useState(
     localStorage.activePage ? JSON.parse(localStorage.activePage) : "upload",
   );
@@ -161,6 +191,7 @@ export default function App() {
     setActivePage("upload");
     setMobileMenuOpen(false);
     setActiveDoc(null);
+    setUsage(null);
   }, [setUser, setActivePage, setActiveDoc, setActiveIndex, setFiles, setMobileMenuOpen]);
 
   useEffect(() => {
@@ -224,6 +255,7 @@ export default function App() {
 
     let processedCount = 0;
     let lastProcessedDoc = null;
+    let hitDocLimit = false;
 
     for (const { index, file } of pendingEntries) {
       try {
@@ -244,6 +276,18 @@ export default function App() {
         };
         processedCount++;
       } catch (err) {
+        // Check for structured DOCUMENT_LIMIT error
+        if (err.code === "DOCUMENT_LIMIT") {
+          hitDocLimit = true;
+          setFiles((prev) =>
+            prev.map((e, i) =>
+              i === index ? { ...e, status: "error", error: err.message } : e,
+            ),
+          );
+          // Show upgrade modal
+          setUpgradeModalOpen(true);
+          break; // Stop processing more files
+        }
         setFiles((prev) =>
           prev.map((e, i) =>
             i === index ? { ...e, status: "error", error: "Upload failed. Please try again." } : e,
@@ -254,6 +298,9 @@ export default function App() {
 
     setIsProcessing(false);
 
+    // Refresh usage after uploads
+    refreshUsage();
+
     // Auto-navigate to Ask page only if no document is already active
     if (processedCount > 0 && lastProcessedDoc) {
       if (!activeDoc) {
@@ -262,7 +309,7 @@ export default function App() {
         setActivePage("ask");
       }
     }
-  }, [docType]);
+  }, [docType, refreshUsage]);
 
   const handleRemove = useCallback((index) => {
     setFiles((prev) => {
@@ -318,6 +365,17 @@ export default function App() {
         style={{ display: "none" }}
       />
 
+      {/* ── Upgrade Modal ──────────────────────────────────────────────────── */}
+      <UpgradeModal
+        isOpen={upgradeModalOpen}
+        onClose={() => setUpgradeModalOpen(false)}
+        userEmail={user?.email}
+        onSuccess={() => {
+          refreshUsage();
+          setUpgradeModalOpen(false);
+        }}
+      />
+
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header className="app-header">
         <div className="logo">
@@ -336,10 +394,10 @@ export default function App() {
         </button>
 
         <nav className={`app-nav${mobileMenuOpen ? " app-nav--open" : ""}`}>
-          {PAGES.map((page) => (
+          {navPages.map((page) => (
             <span
               key={page}
-              className={`nav-item${activePage === page ? " nav-item--active" : ""}`}
+              className={`nav-item${activePage === page ? " nav-item--active" : ""}${page === "admin" ? " nav-item--admin" : ""}`}
               onClick={() => {
                 setActivePage(page);
                 setMobileMenuOpen(false);
@@ -347,12 +405,21 @@ export default function App() {
             >
               {page === "documents"
                 ? "Documents"
-                : page.charAt(0).toUpperCase() + page.slice(1)}
+                : page === "admin"
+                  ? <>
+                      <Shield size={12} />
+                      Admin
+                    </>
+                  : page.charAt(0).toUpperCase() + page.slice(1)}
             </span>
           ))}
         </nav>
 
         <div className="header-right">
+          <UsageBadge
+            usage={usage}
+            onUpgradeClick={() => setUpgradeModalOpen(true)}
+          />
           <div className="status-pill">
             <span className="status-dot" />
             <span className="status-text">
@@ -445,7 +512,11 @@ export default function App() {
         )}
 
         {activePage === "documents" && (
-          <YourDocuments onSelectDoc={handleSelectDoc} user={user} />
+          <YourDocuments
+            onSelectDoc={handleSelectDoc}
+            user={user}
+            onUsageChanged={refreshUsage}
+          />
         )}
 
         {activePage === "ask" && (
@@ -453,12 +524,18 @@ export default function App() {
             activeDoc={activeDoc}
             onNavigateToUpload={() => setActivePage("upload")}
             onNavigateToDocs={() => setActivePage("documents")}
+            usage={usage}
+            onUpgradeClick={() => setUpgradeModalOpen(true)}
+            onUsageChanged={refreshUsage}
           />
         )}
 
+        {activePage === "admin" && isAdmin && <AdminConsole />}
+
         {activePage !== "upload" &&
           activePage !== "ask" &&
-          activePage !== "documents" && <PlaceholderPage page={activePage} />}
+          activePage !== "documents" &&
+          activePage !== "admin" && <PlaceholderPage page={activePage} />}
       </main>
     </div>
   );

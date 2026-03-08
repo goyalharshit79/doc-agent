@@ -96,3 +96,49 @@ def refresh(body: RefreshRequest):
         )
     except Exception as e:
         raise HTTPException(status_code=401, detail=str(e))
+
+
+# ── Forgot / Reset Password ─────────────────────────────────────────────────
+
+class ForgotPasswordRequest(BaseModel):
+    email: EmailStr
+
+
+class ResetPasswordRequest(BaseModel):
+    access_token: str
+    new_password: str
+
+
+@router.post("/forgot-password")
+def forgot_password(body: ForgotPasswordRequest):
+    """Send a password reset email via Supabase."""
+    try:
+        sb = get_supabase()
+        sb.auth.reset_password_email(body.email)
+        return {"message": "If that email exists, a reset link has been sent."}
+    except Exception:
+        # Don't reveal whether the email exists
+        return {"message": "If that email exists, a reset link has been sent."}
+
+
+@router.post("/reset-password")
+def reset_password(body: ResetPasswordRequest):
+    """Reset password using the token from the Supabase reset email."""
+    try:
+        sb = get_supabase()
+        # Use the access_token from the reset link to update the password
+        user_resp = sb.auth.get_user(body.access_token)
+        if not user_resp or not user_resp.user:
+            raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+        res = sb.auth.admin.update_user_by_id(
+            user_resp.user.id,
+            {"password": body.new_password},
+        )
+        if not res.user:
+            raise HTTPException(status_code=400, detail="Password reset failed")
+        return {"message": "Password updated successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Password reset failed: {str(e)}")
