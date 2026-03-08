@@ -54,8 +54,17 @@ const PAGES = ["upload", "documents", "ask", "study", "extract"];
 export default function App() {
   // ── Auth state ─────────────────────────────────────────────────────────────
   const storedToken = localStorage.getItem("docagent_token");
+  const storedEmail = localStorage.getItem("email");
 
-  const [user, setUser] = useState(storedToken ? { token: storedToken } : null);
+  const [user, setUser] = useState(() => {
+    if (storedToken) {
+      if (storedEmail)
+        return {
+          token: storedToken,
+          email: storedEmail,
+        };
+    }
+  });
 
   const handleAuth = (userData) => setUser(userData);
 
@@ -79,7 +88,6 @@ export default function App() {
 
   // Check if current user is admin
   const isAdmin = user?.email === ADMIN_EMAIL;
-
   // Build nav pages (add admin if admin user)
   const navPages = isAdmin ? [...PAGES, "admin"] : PAGES;
 
@@ -94,7 +102,6 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("activePage", JSON.stringify(activePage));
   }, [activePage]);
-
 
   // ── File state (session files only — uploaded in this session) ─────────────
   const [files, setFiles] = useState(() => {
@@ -166,7 +173,6 @@ export default function App() {
       const sessionFile = files.find(
         (f) => f.docId === from_local.doc_id && f.file,
       );
-      console.log(sessionFile);
       setActiveDoc({
         doc_id: from_local.doc_id,
         doc_name: from_local.doc_name,
@@ -179,12 +185,14 @@ export default function App() {
       null;
     }
   }, [files]);
-
-     //handling the logout
+  //handling the logout
   const handleLogout = useCallback(() => {
     localStorage.removeItem("docagent_token");
     localStorage.removeItem("docagent_refresh_token");
     sessionStorage.removeItem("docagent_chat_messages");
+    localStorage.removeItem("activeDoc");
+    activeDoc &&
+      del(`docagent_file_${activeDoc.doc_name}`).catch(console.error);
     setUser(null);
     setFiles([]);
     setActiveIndex(0);
@@ -192,11 +200,19 @@ export default function App() {
     setMobileMenuOpen(false);
     setActiveDoc(null);
     setUsage(null);
-  }, [setUser, setActivePage, setActiveDoc, setActiveIndex, setFiles, setMobileMenuOpen]);
+  }, [
+    setUser,
+    setActivePage,
+    setActiveDoc,
+    setActiveIndex,
+    setFiles,
+    setMobileMenuOpen,
+  ]);
 
   useEffect(() => {
-    window.addEventListener('docagent:session_expired', handleLogout);
-    return () => window.removeEventListener('docagent:session_expired', handleLogout);
+    window.addEventListener("docagent:session_expired", handleLogout);
+    return () =>
+      window.removeEventListener("docagent:session_expired", handleLogout);
   }, [handleLogout]);
 
   // Derived state
@@ -290,7 +306,13 @@ export default function App() {
         }
         setFiles((prev) =>
           prev.map((e, i) =>
-            i === index ? { ...e, status: "error", error: "Upload failed. Please try again." } : e,
+            i === index
+              ? {
+                  ...e,
+                  status: "error",
+                  error: "Upload failed. Please try again.",
+                }
+              : e,
           ),
         );
       }
@@ -403,14 +425,16 @@ export default function App() {
                 setMobileMenuOpen(false);
               }}
             >
-              {page === "documents"
-                ? "Documents"
-                : page === "admin"
-                  ? <>
-                      <Shield size={12} />
-                      Admin
-                    </>
-                  : page.charAt(0).toUpperCase() + page.slice(1)}
+              {page === "documents" ? (
+                "Documents"
+              ) : page === "admin" ? (
+                <>
+                  <Shield size={12} />
+                  Admin
+                </>
+              ) : (
+                page.charAt(0).toUpperCase() + page.slice(1)
+              )}
             </span>
           ))}
         </nav>
