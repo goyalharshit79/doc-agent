@@ -1,0 +1,75 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 340 72" width="340" height="72">
+  <defs>
+    <linearGradient id="nodeGoldDk" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#C49A5A"/>
+      <stop offset="100%" stop-color="#E0B870"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Dark card background -->
+  <rect width="340" height="72" rx="0" fill="#1A1714"/>
+
+  <!-- ============================================================
+       ICON on dark background
+       ============================================================ -->
+
+  <!-- Document body: near-transparent fill, light stroke -->
+  <path d="M 8,6 L 40,6 L 52,18 L 52,66 L 8,66 Z"
+        fill="#F5F0E6" fill-opacity="0.06" stroke="#D4C8B4" stroke-width="1.4" stroke-linejoin="round"/>
+
+  <!-- Fold triangle -->
+  <path d="M 40,6 L 52,18 L 40,18 Z"
+        fill="#C49A5A" fill-opacity="0.15" stroke="#D4C8B4" stroke-width="1.4" stroke-linejoin="round"/>
+
+  <!-- Lines -->
+  <line x1="17" y1="30" x2="44" y2="30" stroke="#6A6258" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="17" y1="40" x2="41" y2="40" stroke="#6A6258" stroke-width="1.5" stroke-linecap="round"/>
+  <line x1="17" y1="50" x2="35" y2="50" stroke="#6A6258" stroke-width="1.5" stroke-linecap="round"/>
+
+  <!-- AI nodes — warm gold -->
+  <circle cx="17" cy="30" r="3" fill="url(#nodeGoldDk)"/>
+  <circle cx="17" cy="40" r="3" fill="url(#nodeGoldDk)"/>
+  <circle cx="17" cy="50" r="3" fill="url(#nodeGoldDk)"/>
+
+  <!-- Connector -->
+  <line x1="17" y1="30" x2="17" y2="50" stroke="#C49A5A" stroke-width="0.8" opacity="0.4" stroke-dasharray="1.5 2"/>
+
+  <!-- AI spark -->
+  <g transform="translate(47, 13)">
+    <line x1="0" y1="-4" x2="0" y2="4"  stroke="#C49A5A" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="-4" y1="0" x2="4" y2="0"  stroke="#C49A5A" stroke-width="1.2" stroke-linecap="round"/>
+    <line x1="-2.5" y1="-2.5" x2="2.5" y2="2.5" stroke="#C49A5A" stroke-width="0.7" stroke-linecap="round" opacity="0.6"/>
+    <line x1="2.5" y1="-2.5" x2="-2.5" y2="2.5" stroke="#C49A5A" stroke-width="0.7" stroke-linecap="round" opacity="0.6"/>
+  </g>
+
+  <!-- ============================================================
+       WORDMARK — light text for dark background
+       ============================================================ -->
+  <text x="70" y="46"
+        font-family="'Georgia', 'Times New Roman', serif"
+        font-weight="400"
+        font-size="36"
+        fill="#F0EAE0"
+        letter-spacing="-0.5">Doc</text>
+
+  <text x="152" y="46"
+        font-family="'Georgia', 'Times New Roman', serif"
+        font-weight="700"
+        font-size="36"
+        fill="#F0EAE0"
+        letter-spacing="-0.5">Agent</text>
+
+  <!-- Dot separator -->
+  <circle cx="148" cy="42" r="2.2" fill="#C49A5A" opacity="0.8"/>
+
+  <!-- Rule -->
+  <line x1="70" y1="54" x2="330" y2="54" stroke="#F0EAE0" stroke-width="0.7" opacity="0.12"/>
+
+  <!-- Tagline -->
+  <text x="72" y="66"
+        font-family="'Helvetica Neue', 'Arial', sans-serif"
+        font-size="8.5"
+        font-weight="400"
+        fill="#6A6055"
+        letter-spacing="4">DOCUMENT INTELLIGENCE</text>
+</svg>

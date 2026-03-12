@@ -26,6 +26,7 @@ import UpgradeModal from "./components/UpgradeModal";
 import AdminConsole from "./components/AdminConsole";
 import { uploadDocument, getUsage } from "./api";
 import { get, set, del } from "idb-keyval";
+import docagentLogo from "../Icons/docagent-logo-v2.svg";
 
 // ── Admin email ─────────────────────────────────────────────────────────────
 const ADMIN_EMAIL = "goyalharshit79@gmail.com";
@@ -401,10 +402,7 @@ export default function App() {
       {/* ── Header ──────────────────────────────────────────────────────────── */}
       <header className="app-header">
         <div className="logo">
-          <span className="logo-mark">D</span>
-          <span className="logo-text">
-            oc<em>Agent</em>
-          </span>
+          <img src={docagentLogo} alt="DocAgent Logo" style={{ height: "40px", width: "auto" }} />
         </div>
 
         <button
